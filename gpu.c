@@ -300,6 +300,7 @@ static void walk_list(uint32_t a, int first) {
         if (a == slow && guard > 2) { fprintf(stderr, "[gpu] lista DMA em ciclo (no=%08x) - cortada\n", a); break; }
     }
 }
+int gpu_pending(void) { return rs_pend; }
 /* chamada de tempos em tempos: tenta continuar a DMA pausada */
 void gpu_resume(void) {
     if (!rs_pend) return;

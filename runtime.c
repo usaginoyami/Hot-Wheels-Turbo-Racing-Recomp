@@ -166,7 +166,7 @@ static void mc_flush(void);
 static void run_vblank(void) { card_poll();
     if (in_cb) return;
     { static int t; if ((++t & 63) == 0) mc_flush(); }
-    uint32_t c = vblank_count(); if (c == last_disp) return; last_disp = c; g_frames++; gpu_vblank(); audio_run(); if (g_win) video_present(); pad_update();
+    uint32_t c = vblank_count(); if (c == last_disp) return; last_disp = c; g_frames++; gpu_vblank(); audio_run(); { extern int gpu_pending(void); extern void gpu_resume(void); gpu_resume(); if (gpu_pending()) { static int sk; if (++sk <= 20 || !(sk % 500)) fprintf(stderr, "[gpu] quadro %u incompleto (lista pausada) - mantem imagem anterior (%d)\n", g_frames, sk); } else if (g_win) video_present(); } pad_update();
     if (getenv("GPU_LOGAT") && g_frames == (uint32_t)atoi(getenv("GPU_LOGAT"))) gpu_logn = 3000;
     if (getenv("VERBOSEAT")) { int f = atoi(getenv("VERBOSEAT")); if ((int)g_frames == f) g_verbose = 1; if ((int)g_frames == f + 1) g_verbose = 0; }
     if (getenv("DUMPAT") && (int)g_frames == atoi(getenv("DUMPAT"))) { FILE* df = fopen("ram.bin", "wb"); fwrite(ram, 1, sizeof ram, df); fclose(df); }
