@@ -6,6 +6,7 @@
 #include "runtime.h"
 
 uint16_t vram[512 * 1024];
+int gpu_dump(const char*);
 static int dmas_f; static long cmds_f0;
 #define VR(x, y) vram[((y) & 511) * 1024 + ((x) & 1023)]
 
@@ -301,22 +302,34 @@ static void walk_list(uint32_t a, int first) {
         if (a == slow && guard > 2) { fprintf(stderr, "[gpu] lista DMA em ciclo (no=%08x) - cortada\n", a); break; }
     }
 }
-int gpu_pending(void) { return rs_pend; }
-/* chamada de tempos em tempos: tenta continuar a DMA pausada */
-void gpu_resume(void) {
-    if (!rs_pend) return;
-    uint32_t a = rs_a, h = rd32(a | 0x80000000), nx = h & 0x1ffffc;
-    if ((h & 0xffffff) == 0xffffff || (h & 0x800000)) { rs_pend = 0; return; }
-    if (nx == a) { if (++rs_tries > 2000) { rs_pend = 0; fprintf(stderr, "[gpu] no sem ligacao ate o fim - descartado\n"); } return; }
-    rs_pend = 0; walk_list(nx, 1);
+static uint32_t q_madr[16]; static int q_n;
+int gpu_pending(void) { return rs_pend || q_n; }
+static void drain(void) {
+    for (int it = 0; it < 64; it++) {
+        if (rs_pend) {
+            uint32_t a = rs_a, h = rd32(a | 0x80000000), nx = h & 0x1ffffc;
+            if ((h & 0xffffff) == 0xffffff || (h & 0x800000)) { rs_pend = 0; continue; }
+            if (nx == a) { if (++rs_tries > 4000) { rs_pend = 0; fprintf(stderr, "[gpu] no sem ligacao ate o fim - descartado\n"); continue; } return; }
+            rs_pend = 0; walk_list(nx, 1); continue;
+        }
+        if (!q_n) return;
+        uint32_t m = q_madr[0]; memmove(q_madr, q_madr + 1, (--q_n) * sizeof q_madr[0]); walk_list(m, 1);
+    }
 }
+/* chamada de tempos em tempos: tenta continuar a DMA pausada */
+void gpu_resume(void) { if (rs_pend || q_n) drain(); }
+int g_gpu_forced;
+/* no vblank: o que ainda esta sem ligacao e tratado como fim de lista */
+void gpu_force_flush(void) { for (int i = 0; i < 20 && (rs_pend || q_n); i++) { drain(); if (rs_pend) { rs_pend = 0; g_gpu_forced++; } } }
+
 /* DMA canal 2: sync 1 = bloco, sync 2 = lista encadeada; dir bit0 = RAM->GPU */
 void gpu_dma(uint32_t madr, uint32_t bcr, uint32_t chcr) {
     dmas_f++; g_gpu_dirty = 1; gpu_busy_until = now_s() + 20e-6; { extern int g_gpu_cb_pending; extern double g_gpu_cb_pending_t; g_gpu_cb_pending++; g_gpu_cb_pending_t = now_s() + 300e-6; }
     uint32_t sync = (chcr >> 9) & 3;
     if (getenv("GPU_DMAT")) { extern uint32_t g_frames; if (g_frames >= 8230) fprintf(stderr, "[gdma] q%u madr=%08x bcr=%08x chcr=%08x\n", g_frames, madr, bcr, chcr); }
     if (sync == 2) {
-        walk_list(madr & 0x1ffffc, 1);
+        if (q_n < 16) q_madr[q_n++] = madr & 0x1ffffc; else fprintf(stderr, "[gpu] fila de listas cheia\n");
+        drain();
     } else {
         uint32_t words = (bcr & 0xffff) * (sync == 1 ? (bcr >> 16) : 1); if (!words) words = 0x10000;
         uint32_t a = madr & 0x1ffffc;
@@ -336,6 +349,7 @@ int gpu_flat(void) {   /* area visivel de cor (quase) unica: quadro provavelment
 void gpu_vblank(void) { g.field ^= 1;
     if (getenv("FLATLOG")) { extern uint32_t g_frames; int w = 320, h = 240, mn = 99999, mx = 0; int dis = 0;
         for (int k = 0; k < 400; k++) { int x = (k * 37) % w, y = (k * 53) % h; uint16_t v = VR(g.dx + x, g.dy + y); int l = (v & 31) + ((v >> 5) & 31) + ((v >> 10) & 31); if (l < mn) mn = l; if (l > mx) mx = l; }
+        if (mx - mn < 6 && gpu_cmds - cmds_f0 > 500) { static int nf; if (nf < 4) { char fn[64]; sprintf(fn, "flat_%d.ppm", nf); extern int gpu_dump_vram(const char*); gpu_dump_vram(fn); sprintf(fn, "flatd_%d.ppm", nf); gpu_dump(fn); nf++; } }
         if (mx - mn < 6) fprintf(stderr, "[flat] quadro %u disp=(%d,%d) dmas=%d cmds=%ld pend=%d dispoff=%d draw=(%d,%d) ox,oy=%d,%d\n", g_frames, g.dx, g.dy, dmas_f, gpu_cmds - cmds_f0, rs_pend, g.dispoff, g.ax0, g.ay0, g.ox, g.oy);
         else if (getenv("FLATLOG")[0] == '2') fprintf(stderr, "[ok] quadro %u disp=(%d,%d) dmas=%d cmds=%ld draw=(%d,%d) ox,oy=%d,%d\n", g_frames, g.dx, g.dy, dmas_f, gpu_cmds - cmds_f0, g.ax0, g.ay0, g.ox, g.oy); }
     dmas_f = 0; cmds_f0 = gpu_cmds; }
