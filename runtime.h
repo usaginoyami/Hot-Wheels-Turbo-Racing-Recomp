@@ -1,6 +1,10 @@
 #pragma once
 #include <stdint.h>
 #include <stddef.h>
+#include <stdlib.h>
+/* getenv e lento (no Windows, muito): resultado em cache por literal. Usado em caminhos quentes (E/S, GPU, laços). */
+char* fast_getenv(const char* k);
+#define getenv(k) fast_getenv(k)
 typedef struct { uint32_t addr; void (*fn)(void); } FuncEntry;
 extern const FuncEntry func_table[]; extern const int func_table_len;
 extern uint32_t R[32], HI, LO;

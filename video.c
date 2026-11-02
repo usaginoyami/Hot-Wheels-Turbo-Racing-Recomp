@@ -11,7 +11,7 @@ void gpu_render(uint32_t*, int*, int*);
 void pad_set(uint32_t); void pad_set2(uint32_t); void pad_has2(int);
 static SDL_Window* win; static SDL_Renderer* ren; static SDL_Texture* tex; static int tw, th;
 static uint32_t fb[640 * 480];
-static uint32_t keys, keys2; static SDL_AudioDeviceID adev; static SDL_GameController* gcs[2];
+static uint32_t keys, keys2; static int hold1[32], hold2[32];   /* toque curto nao pode se perder se o jogo estiver lento: segura >= 4 quadros */ static SDL_AudioDeviceID adev; static SDL_GameController* gcs[2];
 static void gc_open(void) {
     for (int i = 0; i < SDL_NumJoysticks(); i++) if (SDL_IsGameController(i)) {
         SDL_GameController* c = SDL_GameControllerOpen(i); if (!c) continue;
@@ -91,13 +91,14 @@ void video_present(void) {
             SDL_Window* w = SDL_RenderGetWindow(ren); { int fs = (SDL_GetWindowFlags(w) & SDL_WINDOW_FULLSCREEN_DESKTOP) != 0; SDL_SetWindowFullscreen(w, fs ? 0 : SDL_WINDOW_FULLSCREEN_DESKTOP); SDL_ShowCursor(fs ? SDL_ENABLE : SDL_DISABLE); }
             continue;
         }
-        if (e.type == SDL_KEYDOWN && !e.key.repeat) { keys |= keybit(e.key.keysym.sym); keys2 |= keybit2(e.key.keysym.sym); }
+        if (e.type == SDL_KEYDOWN && !e.key.repeat) { uint32_t b1 = keybit(e.key.keysym.sym), b2 = keybit2(e.key.keysym.sym); keys |= b1; keys2 |= b2; for (int i = 0; i < 32; i++) { if (b1 >> i & 1) hold1[i] = 4; if (b2 >> i & 1) hold2[i] = 4; } }
         if (e.type == SDL_KEYUP) { keys &= ~keybit(e.key.keysym.sym); keys2 &= ~keybit2(e.key.keysym.sym); }
         if (e.type == SDL_CONTROLLERDEVICEADDED) gc_open();
         if (e.type == SDL_CONTROLLERDEVICEREMOVED) { for (int k = 0; k < 2; k++) if (gcs[k] && e.cdevice.which == SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(gcs[k]))) { SDL_GameControllerClose(gcs[k]); gcs[k] = NULL; } gc_open(); }
     }
-    pad_set(keys | gc_bits(gcs[0]));
-    pad_has2(1); pad_set2(keys2 | gc_bits(gcs[1]));
+    uint32_t h1 = 0, h2 = 0; for (int i = 0; i < 32; i++) { if (hold1[i] > 0) { h1 |= 1u << i; hold1[i]--; } if (hold2[i] > 0) { h2 |= 1u << i; hold2[i]--; } }
+    pad_set(keys | h1 | gc_bits(gcs[0]));
+    pad_has2(1); pad_set2(keys2 | h2 | gc_bits(gcs[1]));
     int w, h; gpu_render(fb, &w, &h);
     if (!tex || w != tw || h != th) { if (tex) SDL_DestroyTexture(tex); tex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, w, h); tw = w; th = h; }
     if (show_fps) fps_draw(fb, w, h, fps_val);

@@ -105,6 +105,12 @@ void cop0_wr(int r, uint32_t v) { cop0[r] = v; }
 
 /* ---- ganchos HLE: substituem funcoes da biblioteca Sony por versoes em C ---- */
 static uint32_t g_vcount;
+char* fast_getenv(const char* k) {
+    static struct { const char* k; char* v; } t[1024]; static int init;
+    size_t h = ((size_t)k >> 3) & 1023;
+    for (int i = 0; i < 1024; i++, h = (h + 1) & 1023) { if (t[h].k == k) return t[h].v; if (!t[h].k) { t[h].k = k; t[h].v = (getenv)(k); return t[h].v; } }
+    (void)init; return (getenv)(k);
+}
 #ifdef _WIN32
 #include <windows.h>
 #include <mmsystem.h>
@@ -175,7 +181,7 @@ static void run_vblank(void) { card_poll();
 }
 void card_poll(void);
 uint32_t g_bk; void loop_tick(void) { extern double g_vclock; static uint64_t last; if (getenv("NOTICK")) return; g_vclock += 100e-6; if (g_calls == last) { run_vblank(); hw_poll(); } last = g_calls; }
-static void wait_vblank(void) { uint32_t c = vblank_count(); while (vblank_count() == c) { if (g_vtime > 0) { g_vclock += 500e-6; hw_poll(); } else usleep(500); } run_vblank(); }
+static void wait_vblank(void) { uint32_t c = vblank_count(); while (vblank_count() == c) { if (g_vtime > 0) { g_vclock += 500e-6; hw_poll(); } else { hw_poll(); audio_run(); usleep(500); } }   /* tempo real: eventos de hardware (CD, IRQ da SPU) e audio nao podem esperar o fim do quadro */ run_vblank(); }
 static int hle_log;
 static int ov_active = -1; static int g_skipvid = 0; static int ov_valid;
 int hle_hook(uint32_t a) {
