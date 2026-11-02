@@ -86,6 +86,7 @@ void video_present(void) {
     { uint32_t now = SDL_GetTicks(); if (now - t0 >= 500) { fps_val = nf * 1000.0f / (now - t0); nf = 0; t0 = now; } }
     while (SDL_PollEvent(&e)) {
         if (e.type == SDL_QUIT || (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE)) exit(0);
+        if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_F9) { extern int g_diag_req; g_diag_req = 1; }
         if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_F3 && !e.key.repeat) show_fps = !show_fps;
         if (e.type == SDL_KEYDOWN && !e.key.repeat && (e.key.keysym.sym == SDLK_F11 || (e.key.keysym.sym == SDLK_RETURN && (e.key.keysym.mod & KMOD_ALT)))) {
             SDL_Window* w = SDL_RenderGetWindow(ren); { int fs = (SDL_GetWindowFlags(w) & SDL_WINDOW_FULLSCREEN_DESKTOP) != 0; SDL_SetWindowFullscreen(w, fs ? 0 : SDL_WINDOW_FULLSCREEN_DESKTOP); SDL_ShowCursor(fs ? SDL_ENABLE : SDL_DISABLE); }

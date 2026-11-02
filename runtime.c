@@ -72,7 +72,7 @@ void swr(uint32_t a, uint32_t v) { uint32_t b = a & 3, w = rd32(a & ~3u); uint32
 uint32_t dbg_lastfn(void) { return ring[(ring_i - 1) & 63]; }
 uint32_t dbg_ra(void) { return R[31]; }
 void dbg_ring(int n) { fprintf(stderr, "   ring:"); for (int i = n; i >= 1; i--) fprintf(stderr, " %08x(%08x)", ring[(ring_i - i) & 63], ring_ra[(ring_i - i) & 63]); fprintf(stderr, "\n"); }
-static void dump_ring(void) {
+void dump_ring(void) {
     fprintf(stderr, "ultimas funcoes (mais recente por ultimo):\n");
     for (int i = 0; i < 64; i++) { uint32_t a = ring[(ring_i + i) & 63]; if (a) fprintf(stderr, "  %08x (ra=%08x)\n", a, ring_ra[(ring_i + i) & 63]); }
 }
@@ -180,6 +180,7 @@ static void run_vblank(void) { card_poll();
     { extern void hw_vblank_irq(void); in_cb = 1; hw_vblank_irq(); in_cb = 0; }
 }
 void card_poll(void);
+uint64_t get_calls(void) { return g_calls; }
 uint32_t g_looppc; uint32_t g_bk; void loop_tick(void) { extern double g_vclock; static uint64_t last; if (getenv("NOTICK")) return; g_vclock += 100e-6; if (g_calls == last) { run_vblank(); hw_poll(); } last = g_calls; }
 static void wait_vblank(void) { uint32_t c = vblank_count(); while (vblank_count() == c) { if (g_vtime > 0) { g_vclock += 500e-6; hw_poll(); } else { hw_poll(); audio_run(); usleep(500); } }   /* tempo real: eventos de hardware (CD, IRQ da SPU) e audio nao podem esperar o fim do quadro */ run_vblank(); }
 static int hle_log;
