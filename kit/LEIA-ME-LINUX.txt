@@ -1,0 +1,33 @@
+HOT WHEELS TURBO RACING RECOMP - pacote de 1 clique (Linux x86_64)
+==================================================================
+
+Voce precisa do SEU disco do Hot Wheels Turbo Racing (NTSC-U, SLUS-009.64)
+em .cue + .bin (ou so .bin). Este pacote NAO contem nada do jogo.
+
+REQUISITOS: Linux 64 bits com SDL2 (Debian/Ubuntu: sudo apt install libsdl2-2.0-0 | Fedora: sudo dnf install SDL2 | Arch: sudo pacman -S sdl2).
+
+COMO USAR
+  1. Extraia a pasta.
+  2. No terminal:  ./Jogar.sh /caminho/para/seu-disco.cue   (depois basta ./Jogar.sh)
+  Na PRIMEIRA vez ele recompila o jogo (alguns minutos). Depois abre direto.
+
+TECLAS (jogador 1)
+  Setas = direcional | Z = X  X = O  A = quadrado  S = triangulo
+  Q/W = L1/R1 | E/R = L2/R2 | Enter = Start | Backspace = Select | ESC = sair
+  Jogador 2 no teclado: I/J/K/L direcional, U/Y/O/P botoes, Enter do teclado numerico = Start.
+
+MUSICA (CD-DA)
+  A trilha do jogo fica nas faixas de audio do disco. Coloque TODOS os arquivos
+  (Track 01 ... Track 14 .bin) na MESMA pasta do .cue e escolha o .cue.
+  Se so existir o Track 01, o jogo roda normalmente, sem a musica.
+
+SAVE (memory card): dados/memcard1.mcd (copie para fazer backup).
+  Na 1a vez aparece "VALID MEMORY CARD NOT FOUND": escolha RETRY (X); depois
+  "CREATE NEW FILE?": desca para YES e confirme (X). Nas proximas vezes carrega sozinho.
+
+PROBLEMAS
+  - Antivirus bloqueou algo: libere a pasta (o jogo e gerado na hora).
+  - Recompilar do zero: ./Jogar.sh --reconstruir
+  - Mudou o disco: apague dados/disco.txt e rode de novo.
+
+Nao distribua a pasta "dados": ela contem codigo gerado do jogo.

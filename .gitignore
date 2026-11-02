@@ -1,0 +1,10 @@
+dados/
+gen/
+*.mcd
+*.bin
+*.cue
+*.exe
+*.o
+SLUS_*
+CCCPSX*
+__pycache__/
