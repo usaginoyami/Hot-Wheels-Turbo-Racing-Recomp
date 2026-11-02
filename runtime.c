@@ -108,7 +108,7 @@ static uint32_t g_vcount;
 #ifdef _WIN32
 #include <windows.h>
 #include <mmsystem.h>
-double g_vbonus;
+double g_vbonus; double g_vclock; static int g_vtime = 0;   /* no Windows o relogio e sempre o real */
 double now_s(void) { static LARGE_INTEGER f; LARGE_INTEGER c; if (!f.QuadPart) QueryPerformanceFrequency(&f); QueryPerformanceCounter(&c); return (double)c.QuadPart / (double)f.QuadPart + g_vbonus; }   /* relogio de alta resolucao (clock_gettime no Windows pode ser grosseiro: ~15 ms) */
 static void win_usleep(unsigned us) { if (us >= 400) { Sleep(1); return; } double t = now_s() + us * 1e-6; while (now_s() < t) YieldProcessor(); }   /* usleep do Windows tem granularidade de ~15 ms: quebrava o ritmo dos setores do CD (video) */
 #define usleep(x) win_usleep(x)
