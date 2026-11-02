@@ -27,4 +27,5 @@ void spu_dma(uint32_t madr, uint32_t words, int to_spu);
 void gpu_dma(uint32_t madr, uint32_t bcr, uint32_t chcr);
 
 extern uint32_t g_bk; void loop_tick(void);
-#define LOOP_TICK() do { if (!(++g_bk & 0x3ff)) loop_tick(); } while (0)
+extern uint32_t g_looppc;
+#define LOOP_TICK(pc) do { g_looppc = (pc); if (!(++g_bk & 0x3ff)) loop_tick(); } while (0)

@@ -283,12 +283,13 @@ void gpu_dma(uint32_t madr, uint32_t bcr, uint32_t chcr) {
     uint32_t sync = (chcr >> 9) & 3;
     if (getenv("GPU_DMAT")) { extern uint32_t g_frames; if (g_frames >= 8230) fprintf(stderr, "[gdma] q%u madr=%08x bcr=%08x chcr=%08x\n", g_frames, madr, bcr, chcr); }
     if (sync == 2) {
-        uint32_t a = madr & 0x1ffffc; int guard = 0;
+        uint32_t a = madr & 0x1ffffc; int guard = 0; uint32_t slow = a; 
         while (guard++ < 200000) {
             uint32_t h = rd32(a | 0x80000000); int n = h >> 24;
             for (int i = 0; i < n; i++) gpu_gp0(rd32((a + 4 + 4 * i) | 0x80000000));
             if ((h & 0xffffff) == 0xffffff || (h & 0x800000)) break;
             a = h & 0x1ffffc;
+            if (!(guard & 1)) { slow = rd32(slow | 0x80000000) & 0x1ffffc; } if (a == slow && guard > 2) { fprintf(stderr, "[gpu] lista DMA em ciclo (madr=%08x no=%08x) - cortada\n", madr, a); break; }
         }
     } else {
         uint32_t words = (bcr & 0xffff) * (sync == 1 ? (bcr >> 16) : 1); if (!words) words = 0x10000;

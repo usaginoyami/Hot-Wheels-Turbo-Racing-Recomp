@@ -180,7 +180,7 @@ static void run_vblank(void) { card_poll();
     { extern void hw_vblank_irq(void); in_cb = 1; hw_vblank_irq(); in_cb = 0; }
 }
 void card_poll(void);
-uint32_t g_bk; void loop_tick(void) { extern double g_vclock; static uint64_t last; if (getenv("NOTICK")) return; g_vclock += 100e-6; if (g_calls == last) { run_vblank(); hw_poll(); } last = g_calls; }
+uint32_t g_looppc; uint32_t g_bk; void loop_tick(void) { extern double g_vclock; static uint64_t last; if (getenv("NOTICK")) return; g_vclock += 100e-6; if (g_calls == last) { run_vblank(); hw_poll(); } last = g_calls; }
 static void wait_vblank(void) { uint32_t c = vblank_count(); while (vblank_count() == c) { if (g_vtime > 0) { g_vclock += 500e-6; hw_poll(); } else { hw_poll(); audio_run(); usleep(500); } }   /* tempo real: eventos de hardware (CD, IRQ da SPU) e audio nao podem esperar o fim do quadro */ run_vblank(); }
 static int hle_log;
 static int ov_active = -1; static int g_skipvid = 0; static int ov_valid;
@@ -442,7 +442,7 @@ static void* wd_main(void* arg) {
     for (;;) {
         WD_SLEEP(1000); t++;
         uint32_t f = g_frames;
-        if (f == last) { if (++still == 6 || (still > 6 && still % 30 == 0)) { fprintf(stderr, "\n[travou] sem quadros ha %d s (quadro %u, chamadas %llu)\n", still, f, (unsigned long long)g_calls); { extern void hw_dump(void); hw_dump(); } dump_ring(); fflush(stderr); } }
+        if (f == last) { if (++still == 6 || (still > 6 && still % 30 == 0)) { fprintf(stderr, "\n[travou] sem quadros ha %d s (quadro %u, chamadas %llu, ultimo laco %08x)\n", still, f, (unsigned long long)g_calls, g_looppc); { extern void hw_dump(void); hw_dump(); } dump_ring(); fflush(stderr); } }
         else still = 0;
         if (t % 5 == 0) { fprintf(stderr, "[hb] %ds quadro=%u chamadas=%llu\n", t, f, (unsigned long long)g_calls); fflush(stderr); }
         last = f;

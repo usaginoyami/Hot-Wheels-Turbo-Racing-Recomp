@@ -188,7 +188,7 @@ def emit_func(f, exe, funcs, out):
         op, rs, rt, rd, sh, fn, imm, tgt = decode(w)
         if is_branch(w) or op in (2, 3) or (op == 0 and fn in (8, 9)): ds.add(a + 4)
     def tgt_goto(t, cur=None):
-        if t in f.insns and (t in f.labels or t in f.cases or t == fs): return ('{ LOOP_TICK(); goto %s; }' % label(t)) if (cur is not None and t <= cur and not os.environ.get('RECOMP_NOTICK')) else 'goto %s;' % label(t)
+        if t in f.insns and (t in f.labels or t in f.cases or t == fs): return ('{ LOOP_TICK(0x%x); goto %s; }' % (t, label(t))) if (cur is not None and t <= cur and not os.environ.get('RECOMP_NOTICK')) else 'goto %s;' % label(t)
         return '{ %s(); return; }' % fname(t) if (t in funcs) else '{ call_addr(0x%x); return; }' % t
     for i, a in enumerate(addrs):
         w = exe.w(a)
