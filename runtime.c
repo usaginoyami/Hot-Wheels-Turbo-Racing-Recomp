@@ -430,6 +430,35 @@ void call_addr(uint32_t a) {
     fprintf(stderr, "[nao traduzido] chamada para %08x ra=%08x t1=%08x (overlay ou ponteiro de BIOS?)\n", a, R[31], R[9]); dump_ring(); exit(8);
 }
 
+/* ---- diagnostico: coracao (a cada 5 s) e deteccao de travamento, gravados no log (--log ARQ) ---- */
+#ifdef _WIN32
+#define WD_SLEEP(ms) Sleep(ms)
+#else
+#include <pthread.h>
+#define WD_SLEEP(ms) usleep((ms) * 1000)
+#endif
+static void* wd_main(void* arg) {
+    (void)arg; uint32_t last = 0; int still = 0, t = 0;
+    for (;;) {
+        WD_SLEEP(1000); t++;
+        uint32_t f = g_frames;
+        if (f == last) { if (++still == 6 || (still > 6 && still % 30 == 0)) { fprintf(stderr, "\n[travou] sem quadros ha %d s (quadro %u, chamadas %llu)\n", still, f, (unsigned long long)g_calls); { extern void hw_dump(void); hw_dump(); } dump_ring(); fflush(stderr); } }
+        else still = 0;
+        if (t % 5 == 0) { fprintf(stderr, "[hb] %ds quadro=%u chamadas=%llu\n", t, f, (unsigned long long)g_calls); fflush(stderr); }
+        last = f;
+    }
+    return 0;
+}
+#ifdef _WIN32
+static DWORD WINAPI wd_win(LPVOID a) { wd_main(a); return 0; }
+#endif
+static void wd_start(void) {
+#ifdef _WIN32
+    CreateThread(NULL, 0, wd_win, NULL, 0, NULL);
+#else
+    pthread_t th; if (!pthread_create(&th, NULL, wd_main, NULL)) pthread_detach(th);
+#endif
+}
 extern void func_entry_dummy(void);
 int main(int argc, char** argv) {
 #ifdef _WIN32
@@ -454,6 +483,7 @@ int main(int argc, char** argv) {
         else if (!strcmp(argv[i], "--start-at") && i + 1 < argc) pad_start_at = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--frames") && i + 1 < argc) g_maxf = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--bin") && i + 1 < argc) hw_set_bin(argv[++i]);
+        else if (!strcmp(argv[i], "--log") && i + 1 < argc) { if (freopen(argv[++i], "w", stderr)) { setvbuf(stderr, NULL, _IOLBF, 0); wd_start(); } }
     }
     overlay_init(); init_kernel_tables();
     R[28] = gp; R[29] = 0x801fff00; R[31] = 0;

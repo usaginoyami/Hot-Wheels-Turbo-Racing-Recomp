@@ -127,7 +127,7 @@ def compilar():
         c = zig + ['cc', '-target', ALVO] + objs + [os.path.join(sdl, 'lib', 'libSDL2.dll.a'),
              os.path.join(sdl, 'lib', 'libSDL2main.a'), '-lm', '-lwinmm', '-o', EXE]
     else:
-        c = zig + ['cc', '-target', ALVO] + objs + [achar_sdl_linux(), '-lm', '-o', EXE]
+        c = zig + ['cc', '-target', ALVO] + objs + [achar_sdl_linux(), '-lm', '-lpthread', '-o', EXE]
     r = subprocess.run(c, env=env, capture_output=True, text=True)
     if r.returncode:
         print(r.stderr[-2000:]); die('falha ao ligar o executavel.')
@@ -155,10 +155,15 @@ def main():
         print('[2/3] Jogo ja compilado.')
     if os.environ.get('FB_SO_COMPILAR'):
         print('Compilado (modo teste).'); return
-    print('[3/3] Abrindo o jogo...  (ESC sai; save fica em dados/memcard1.mcd)')
+    print('[3/3] Abrindo o jogo...  (ESC sai; save: dados/memcard1.mcd; log: dados/log.txt)')
     extra = [a for a in resto if a.startswith('--') or (not os.path.exists(a))]
-    cmd = [EXE, 'jogo/SLUS_009.64', '--bin', bin_path, '--janela', '--cd-turbo', '10'] + extra
-    sys.exit(subprocess.call(cmd, cwd=DADOS))
+    LOG = os.path.join(DADOS, 'log.txt')
+    try:
+        if os.path.exists(LOG): shutil.copyfile(LOG, os.path.join(DADOS, 'log_anterior.txt'))
+    except OSError: pass
+    cmd = [EXE, 'jogo/SLUS_009.64', '--bin', bin_path, '--janela', '--cd-turbo', '10', '--log', 'log.txt'] + extra
+    env = dict(os.environ); env['TTY'] = '1'
+    sys.exit(subprocess.call(cmd, cwd=DADOS, env=env))
 
 if __name__ == '__main__':
     try:
