@@ -258,7 +258,9 @@ void gpu_gp1(uint32_t w) {
     }
 }
 
+void gpu_resume(void);
 uint32_t gpu_stat(void) {
+    gpu_resume();
     uint32_t s = g.tpx | (g.tpy << 4) | (g.semi << 5) | (g.depth << 7) | (g.dither << 9) | (g.drawdisp << 10) | (g.setmask << 11) | (g.chkmask << 12) | (g.texdis << 15);
     s |= ((g.hres & 3) << 17) | (((g.hres >> 2) & 1) << 16) | (g.vres << 19) | (g.vmode << 20) | (g.d24 << 21) | (g.dispoff << 23);
     s |= 0x1c000000u | (1u << 25) | (g.dir << 29) | ((uint32_t)g.field << 31);
@@ -277,20 +279,42 @@ uint32_t gpu_read(void) {
     return readlatch;
 }
 
+
+/* Lista encadeada. No PS1 a DMA e lenta e o jogo continua montando o fim da lista enquanto ela anda;
+   aqui a DMA e instantanea, entao um no que aponta pra si mesmo (ainda nao ligado) pausa a DMA e ela
+   continua depois, quando o jogo ja ligou o no. */
+static uint32_t rs_a; static int rs_pend, rs_tries;
+static void walk_list(uint32_t a, int first) {
+    int guard = 0; uint32_t slow = a; rs_pend = 0;
+    while (guard++ < 200000) {
+        uint32_t h;
+        if (!first || guard > 1) { h = rd32(a | 0x80000000); }
+        else h = rd32(a | 0x80000000);
+        int n = h >> 24;
+        if (first || guard > 1) for (int i = 0; i < n; i++) gpu_gp0(rd32((a + 4 + 4 * i) | 0x80000000));
+        if ((h & 0xffffff) == 0xffffff || (h & 0x800000)) break;
+        uint32_t nx = h & 0x1ffffc;
+        if (nx == a) { rs_a = a; rs_pend = 1; rs_tries = 0; return; }   /* no ainda sem ligacao */
+        a = nx;
+        if (!(guard & 1)) slow = rd32(slow | 0x80000000) & 0x1ffffc;
+        if (a == slow && guard > 2) { fprintf(stderr, "[gpu] lista DMA em ciclo (no=%08x) - cortada\n", a); break; }
+    }
+}
+/* chamada de tempos em tempos: tenta continuar a DMA pausada */
+void gpu_resume(void) {
+    if (!rs_pend) return;
+    uint32_t a = rs_a, h = rd32(a | 0x80000000), nx = h & 0x1ffffc;
+    if ((h & 0xffffff) == 0xffffff || (h & 0x800000)) { rs_pend = 0; return; }
+    if (nx == a) { if (++rs_tries > 2000) { rs_pend = 0; fprintf(stderr, "[gpu] no sem ligacao ate o fim - descartado\n"); } return; }
+    rs_pend = 0; walk_list(nx, 1);
+}
 /* DMA canal 2: sync 1 = bloco, sync 2 = lista encadeada; dir bit0 = RAM->GPU */
 void gpu_dma(uint32_t madr, uint32_t bcr, uint32_t chcr) {
     g_gpu_dirty = 1; gpu_busy_until = now_s() + 20e-6; { extern int g_gpu_cb_pending; extern double g_gpu_cb_pending_t; g_gpu_cb_pending++; g_gpu_cb_pending_t = now_s() + 300e-6; }
     uint32_t sync = (chcr >> 9) & 3;
     if (getenv("GPU_DMAT")) { extern uint32_t g_frames; if (g_frames >= 8230) fprintf(stderr, "[gdma] q%u madr=%08x bcr=%08x chcr=%08x\n", g_frames, madr, bcr, chcr); }
     if (sync == 2) {
-        uint32_t a = madr & 0x1ffffc; int guard = 0; uint32_t slow = a; 
-        while (guard++ < 200000) {
-            uint32_t h = rd32(a | 0x80000000); int n = h >> 24;
-            for (int i = 0; i < n; i++) gpu_gp0(rd32((a + 4 + 4 * i) | 0x80000000));
-            if ((h & 0xffffff) == 0xffffff || (h & 0x800000)) break;
-            a = h & 0x1ffffc;
-            if (!(guard & 1)) { slow = rd32(slow | 0x80000000) & 0x1ffffc; } if (a == slow && guard > 2) { fprintf(stderr, "[gpu] lista DMA em ciclo (madr=%08x no=%08x) - cortada\n", madr, a); break; }
-        }
+        walk_list(madr & 0x1ffffc, 1);
     } else {
         uint32_t words = (bcr & 0xffff) * (sync == 1 ? (bcr >> 16) : 1); if (!words) words = 0x10000;
         uint32_t a = madr & 0x1ffffc;
