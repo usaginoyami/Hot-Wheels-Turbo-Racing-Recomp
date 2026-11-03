@@ -20,6 +20,23 @@ static uint8_t th_img[TH_N][120][160][3]; static uint32_t th_frame[TH_N]; static
 static void thumb_dump(const char* path);
 static int dmas_f; static long cmds_f0;
 #define VR(x, y) vram[((y) & 511) * 1024 + ((x) & 1023)]
+/* ---- resolucao interna maior: um framebuffer 'hr' S vezes maior que a VRAM. A VRAM nativa continua sendo desenhada e e a fonte das texturas;
+   o hr recebe as mesmas primitivas com coordenadas x S (bordas sem serrilhado) e e o que vai pra tela. S=1 desliga (igual ao original). ---- */
+static int S = 1; static uint16_t* hr;
+#define HRW (1024 * S)
+#define HR(X, Y) hr[(((Y) & (512 * S - 1)) * HRW) + ((X) & (HRW - 1))]
+static void rep_rect(int x0, int y0, int w, int h) {   /* copia a area nativa da VRAM pro hr (replicando cada pixel S x S) */
+    if (S < 2 || !hr) return;
+    for (int j = 0; j < h; j++) for (int i = 0; i < w; i++) { uint16_t v = VR(x0 + i, y0 + j); for (int b = 0; b < S; b++) for (int a = 0; a < S; a++) HR((x0 + i) * S + a, (y0 + j) * S + b) = v; }
+}
+int gpu_scale(void) { return S; }
+void gpu_cycle_scale(void);
+void gpu_set_scale(int s) {
+    if (s < 1) s = 1; if (s == 3) s = 4; if (s > 4) s = 4; if (s == S && (hr || s == 1)) return;
+    free(hr); hr = NULL; S = s;
+    if (S > 1) { hr = malloc((size_t)1024 * S * 512 * S * 2); if (!hr) { S = 1; return; } rep_rect(0, 0, 1024, 512); }
+    fprintf(stderr, "[gpu] resolucao interna %dx\n", S);
+}
 
 static struct {
     int tpx, tpy, semi, depth, dither, drawdisp, setmask, chkmask, texdis;
@@ -42,8 +59,25 @@ static int sy(uint32_t v) { return ((int32_t)(v << 5)) >> 21; }
 
 static inline uint16_t c15(int r, int gg, int b) { if (r > 31) r = 31; if (gg > 31) gg = 31; if (b > 31) b = 31; if (r < 0) r = 0; if (gg < 0) gg = 0; if (b < 0) b = 0; return r | (gg << 5) | (b << 10); }
 
+static int g_blk = 1;   /* 1: plot() tambem escreve o bloco S x S no hr (linhas e sprites); tri desliga e usa tri_s */
+static inline void plot_hr(int X, int Y, int r, int gg, int b, int semi) {
+    uint16_t* d = &HR(X, Y);
+    if (g.chkmask && (*d & 0x8000)) return;
+    if (semi) {
+        int br = *d & 31, bg = (*d >> 5) & 31, bb = (*d >> 10) & 31;
+        switch (g.semi) {
+        case 0: r = (br + r) / 2; gg = (bg + gg) / 2; b = (bb + b) / 2; break;
+        case 1: r += br; gg += bg; b += bb; break;
+        case 2: r = br - r; gg = bg - gg; b = bb - b; break;
+        default: r = br + r / 4; gg = bg + gg / 4; b = bb + b / 4; break;
+        }
+    }
+    r = r > 31 ? 31 : r < 0 ? 0 : r; gg = gg > 31 ? 31 : gg < 0 ? 0 : gg; b = b > 31 ? 31 : b < 0 ? 0 : b;
+    *d = r | (gg << 5) | (b << 10) | (g.setmask ? 0x8000 : 0);
+}
 static inline void plot(int x, int y, int r, int gg, int b, int semi, int mb15) {
     if (x < g.ax0 || x > g.ax1 || y < g.ay0 || y > g.ay1) return;
+    if (S > 1 && g_blk) for (int bb2 = 0; bb2 < S; bb2++) for (int aa = 0; aa < S; aa++) plot_hr(x * S + aa, y * S + bb2, r, gg, b, semi);
     uint16_t* d = &VR(x, y);
     if (g.chkmask && (*d & 0x8000)) return;
     if (semi) {
@@ -71,7 +105,7 @@ static uint16_t tex_sample(int u, int v, int clx, int cly) {
 
 typedef struct { int x, y, r, g, b, u, v; } V;
 
-static void tri(V a, V b, V c, int textured, int semi, int raw, int gouraud, int clx, int cly) {
+static void tri_n(V a, V b, V c, int textured, int semi, int raw, int gouraud, int clx, int cly) {
     gpu_tris++;
     int area = (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
     if (!area) return;
@@ -101,6 +135,42 @@ static void tri(V a, V b, V c, int textured, int semi, int raw, int gouraud, int
             plot(x, y, tr, tg, tb, semi && (t & 0x8000), 0);
         } else plot(x, y, r >> 3, gg >> 3, bl >> 3, semi, 0);
     }
+}
+
+static void tri_s(V a, V b, V c, int textured, int semi, int raw, int gouraud, int clx, int cly) {
+    typedef long long ll;
+    if (((b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x)) == 0) return;
+    { int mnx = a.x, mxx = a.x, mny = a.y, mxy = a.y; V* q[3] = { &a, &b, &c }; for (int i = 1; i < 3; i++) { if (q[i]->x < mnx) mnx = q[i]->x; if (q[i]->x > mxx) mxx = q[i]->x; if (q[i]->y < mny) mny = q[i]->y; if (q[i]->y > mxy) mxy = q[i]->y; } if (mxx - mnx > 1023 || mxy - mny > 511) return; }
+    a.x *= S; a.y *= S; b.x *= S; b.y *= S; c.x *= S; c.y *= S;
+    ll area = (ll)(b.x - a.x) * (c.y - a.y) - (ll)(b.y - a.y) * (c.x - a.x);
+    if (area < 0) { V t = b; b = c; c = t; area = -area; }
+    int minx = a.x, maxx = a.x, miny = a.y, maxy = a.y; V* p[3] = { &a, &b, &c };
+    for (int i = 1; i < 3; i++) { if (p[i]->x < minx) minx = p[i]->x; if (p[i]->x > maxx) maxx = p[i]->x; if (p[i]->y < miny) miny = p[i]->y; if (p[i]->y > maxy) maxy = p[i]->y; }
+    int cx0 = g.ax0 * S, cy0 = g.ay0 * S, cx1 = (g.ax1 + 1) * S - 1, cy1 = (g.ay1 + 1) * S - 1;
+    if (minx < cx0) minx = cx0; if (maxx > cx1) maxx = cx1; if (miny < cy0) miny = cy0; if (maxy > cy1) maxy = cy1;
+    #define BIAS2(p0, p1) ((((p1)->y == (p0)->y) ? ((p1)->x > (p0)->x) : ((p1)->y < (p0)->y)) ? 0 : -1)
+    int b0 = BIAS2(&b, &c), b1 = BIAS2(&c, &a), b2 = BIAS2(&a, &b);
+    for (int y = miny; y <= maxy; y++) for (int x = minx; x <= maxx; x++) {
+        ll w0 = (ll)(c.x - b.x) * (y - b.y) - (ll)(c.y - b.y) * (x - b.x);
+        ll w1 = (ll)(a.x - c.x) * (y - c.y) - (ll)(a.y - c.y) * (x - c.x);
+        ll w2 = (ll)(b.x - a.x) * (y - a.y) - (ll)(b.y - a.y) * (x - a.x);
+        if (w0 + b0 < 0 || w1 + b1 < 0 || w2 + b2 < 0) continue;
+        int r, gg, bl, u, v;
+        if (gouraud) { r = (int)((a.r * w0 + b.r * w1 + c.r * w2) / area); gg = (int)((a.g * w0 + b.g * w1 + c.g * w2) / area); bl = (int)((a.b * w0 + b.b * w1 + c.b * w2) / area); }
+        else { r = a.r; gg = a.g; bl = a.b; }
+        if (textured) {
+            u = (int)((a.u * w0 + b.u * w1 + c.u * w2) / area); v = (int)((a.v * w0 + b.v * w1 + c.v * w2) / area);
+            uint16_t t = tex_sample(u, v, clx, cly);
+            if (!t) continue;
+            int tr = t & 31, tg = (t >> 5) & 31, tb = (t >> 10) & 31;
+            if (!raw) { tr = tr * r / 128; tg = tg * gg / 128; tb = tb * bl / 128; }
+            plot_hr(x, y, tr, tg, tb, semi && (t & 0x8000));
+        } else plot_hr(x, y, r >> 3, gg >> 3, bl >> 3, semi);
+    }
+}
+static void tri(V a, V b, V c, int textured, int semi, int raw, int gouraud, int clx, int cly) {
+    g_blk = 0; tri_n(a, b, c, textured, semi, raw, gouraud, clx, cly); g_blk = 1;
+    if (S > 1) tri_s(a, b, c, textured, semi, raw, gouraud, clx, cly);
 }
 
 static void rect(int x0, int y0, int w, int h, uint32_t col, int textured, int semi, int raw, int u0, int v0, int clx, int cly) {
@@ -176,6 +246,7 @@ static void exec_cmd(void) {
         int x = cmd[1] & 0x3f0, y = (cmd[1] >> 16) & 0x1ff, w = ((cmd[2] & 0x3ff) + 0xf) & ~0xf, h = (cmd[2] >> 16) & 0x1ff;
         uint16_t col = c15((c0 & 255) >> 3, ((c0 >> 8) & 255) >> 3, ((c0 >> 16) & 255) >> 3);
         for (int j = 0; j < h; j++) for (int i = 0; i < w; i++) VR(x + i, y + j) = col;
+        rep_rect(x, y, w, h);
         return;
     }
     if (c >= 0x80 && c < 0xa0) {
@@ -183,6 +254,7 @@ static void exec_cmd(void) {
         int w = cmd[3] & 0x3ff, h = (cmd[3] >> 16) & 0x1ff; if (!w) w = 0x400; if (!h) h = 0x200;
         if (getenv("GPU_LOADS")) { extern uint32_t g_frames; fprintf(stderr, "[vramcopy] quadro %u (%d,%d)->(%d,%d) %dx%d\n", g_frames, sx0, sy0, dx0, dy0, w, h); }
         for (int j = 0; j < h; j++) for (int i = 0; i < w; i++) VR(dx0 + i, dy0 + j) = VR(sx0 + i, sy0 + j);
+        if (S > 1 && hr) for (int j = 0; j < h * S; j++) for (int i = 0; i < w * S; i++) HR(dx0 * S + i, dy0 * S + j) = HR(sx0 * S + i, sy0 * S + j);
         return;
     }
     if (c >= 0xa0 && c < 0xc0) {
@@ -210,6 +282,7 @@ void gpu_gp0(uint32_t w) {
     if (xfer_mode == 1) {
         for (int k = 0; k < 2 && xpos < xtotal; k++, xpos++) {
             VR(xx + xpos % xw, xy + xpos / xw) = (w >> (16 * k)) & 0xffff;
+            if (S > 1) rep_rect(xx + xpos % xw, xy + xpos / xw, 1, 1);
         }
         if (xpos >= xtotal) { xfer_mode = 0; if (getenv("GPU_LOADS")) fprintf(stderr, "[xfer] fim (%d,%d) %dx%d\n", xx, xy, xw, xh); }
         return;
@@ -432,7 +505,14 @@ static void diag_partial(uint32_t words, uint32_t ema, uint32_t madr) {
     fprintf(stderr, "[diag] lista parcial no quadro %u (%u palavras de ~%u, inicio %06x)\n", g_frames, words, ema, madr & 0x1ffffc);
 }
 int gpu_dump_vram(const char* path);
+static void hr_shot(void) {
+    static uint32_t buf[2560 * 1920]; int w, h; gpu_render(buf, &w, &h);
+    FILE* f = fopen("hr_shot.ppm", "wb"); if (!f) return; fprintf(f, "P6\n%d %d\n255\n", w, h);
+    for (int i = 0; i < w * h; i++) { uint8_t p[3] = { buf[i] >> 16, buf[i] >> 8, buf[i] }; fwrite(p, 1, 3, f); } fclose(f);
+}
 void gpu_vblank(void) { g.field ^= 1; skip_frame = 0; thumb_push();
+    { static int init; if (!init) { init = 1; if (getenv("HIRES")) gpu_set_scale(atoi(getenv("HIRES"))); }
+      static int sh = -1; extern uint32_t g_frames; if (sh < 0) sh = getenv("HRSHOT") ? atoi(getenv("HRSHOT")) : 0; if (sh && g_frames == (uint32_t)sh) hr_shot(); }
     { extern uint32_t g_frames; if (diag_due && g_frames >= diag_due) { char tag[40]; sprintf(tag, "auto%d_q%u", ++diag_n, g_frames); diag_due = 0; fprintf(stderr, "[diag] salvando diag_%s.*\n", tag); gpu_diag_dump(tag); } if (g_diag_req) { char tag[40]; static int mn; g_diag_req = 0; sprintf(tag, "F9_%d_q%u", ++mn, g_frames); fprintf(stderr, "[diag] F9: salvando diag_%s.*\n", tag); gpu_diag_dump(tag); } }
     if (getenv("FLATLOG")) { extern uint32_t g_frames; int w = 320, h = 240, mn = 99999, mx = 0; int dis = 0;
         for (int k = 0; k < 400; k++) { int x = (k * 37) % w, y = (k * 53) % h; uint16_t v = VR(g.dx + x, g.dy + y); int l = (v & 31) + ((v >> 5) & 31) + ((v >> 10) & 31); if (l < mn) mn = l; if (l > mx) mx = l; }
@@ -466,6 +546,14 @@ int gpu_dump_vram(const char* path) {
 /* converte a area de exibicao para ARGB8888; retorna largura/altura */
 void gpu_render(uint32_t* out, int* pw, int* ph) {
     int w = (g.hres & 4) ? 368 : (int[]){ 256, 320, 512, 640 }[g.hres & 3], h = g.vres ? 480 : 240;
+    if (S > 1 && hr && !g.d24 && !g.dispoff) {   /* tela em resolucao interna maior */
+        *pw = w * S; *ph = h * S;
+        for (int y = 0; y < h * S; y++) for (int x = 0; x < w * S; x++) {
+            uint16_t v = HR(g.dx * S + x, g.dy * S + y);
+            out[y * w * S + x] = 0xff000000u | (((v & 31) << 3) << 16) | ((((v >> 5) & 31) << 3) << 8) | (((v >> 10) & 31) << 3);
+        }
+        return;
+    }
     *pw = w; *ph = h;
     for (int y = 0; y < h; y++) for (int x = 0; x < w; x++) {
         uint32_t r, gg, b;
@@ -475,3 +563,5 @@ void gpu_render(uint32_t* out, int* pw, int* ph) {
         out[y * w + x] = 0xff000000u | (r << 16) | (gg << 8) | b;
     }
 }
+
+void gpu_cycle_scale(void) { gpu_set_scale(S == 1 ? 2 : S == 2 ? 4 : 1); }

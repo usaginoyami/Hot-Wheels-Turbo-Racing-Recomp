@@ -11,7 +11,7 @@ void gpu_render(uint32_t*, int*, int*);
 void pad_set(uint32_t); void pad_set2(uint32_t); void pad_has2(int);
 static SDL_Window* win; static SDL_Renderer* ren; static SDL_Texture* tex; static int tw, th;
 static SDL_Texture* tgt; static int tgw, tgh, filt = -1;   /* filtro: 0 = pixel (nitido), 1 = bilinear nitido (suaviza serrilhado), 2 = bilinear simples; F10 alterna */
-static uint32_t fb[640 * 480];
+static uint32_t fb[2560 * 1920];
 static uint32_t keys, keys2; static int hold1[32], hold2[32];   /* toque curto nao pode se perder se o jogo estiver lento: segura >= 4 quadros */ static SDL_AudioDeviceID adev; static SDL_GameController* gcs[2];
 static void gc_open(void) {
     for (int i = 0; i < SDL_NumJoysticks(); i++) if (SDL_IsGameController(i)) {
@@ -37,6 +37,7 @@ static uint32_t gc_bits(SDL_GameController* gc) {
 }
 int video_init(void) {
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMECONTROLLER)) { fprintf(stderr, "SDL: %s\n", SDL_GetError()); return 0; }
+    { extern void gpu_set_scale(int); gpu_set_scale(getenv("HIRES") ? atoi(getenv("HIRES")) : 2); }
     win = SDL_CreateWindow("Hot Wheels Turbo Racing (recomp)", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 960, 720, SDL_WINDOW_RESIZABLE);
     ren = SDL_CreateRenderer(win, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
     if (!ren) ren = SDL_CreateRenderer(win, -1, 0);
@@ -88,6 +89,7 @@ void video_present(void) {
     while (SDL_PollEvent(&e)) {
         if (e.type == SDL_QUIT || (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE)) exit(0);
         if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_F9) { extern int g_diag_req; g_diag_req = 1; }
+        if (e.type == SDL_KEYDOWN && !e.key.repeat && e.key.keysym.sym == SDLK_F12) { extern void gpu_cycle_scale(void); gpu_cycle_scale(); }
         if (e.type == SDL_KEYDOWN && !e.key.repeat && e.key.keysym.sym == SDLK_F10) { filt = (filt + 1) % 3; fprintf(stderr, "[video] filtro %d (%s)\n", filt, filt == 0 ? "pixel" : filt == 1 ? "bilinear nitido" : "bilinear"); }
         if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_F3 && !e.key.repeat) show_fps = !show_fps;
         if (e.type == SDL_KEYDOWN && !e.key.repeat && (e.key.keysym.sym == SDLK_F11 || (e.key.keysym.sym == SDLK_RETURN && (e.key.keysym.mod & KMOD_ALT)))) {
