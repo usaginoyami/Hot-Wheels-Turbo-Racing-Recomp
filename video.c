@@ -10,6 +10,7 @@
 void gpu_render(uint32_t*, int*, int*);
 void pad_set(uint32_t); void pad_set2(uint32_t); void pad_has2(int);
 static SDL_Window* win; static SDL_Renderer* ren; static SDL_Texture* tex; static int tw, th;
+static SDL_Texture* tgt; static int tgw, tgh, filt = -1;   /* filtro: 0 = pixel (nitido), 1 = bilinear nitido (suaviza serrilhado), 2 = bilinear simples; F10 alterna */
 static uint32_t fb[640 * 480];
 static uint32_t keys, keys2; static int hold1[32], hold2[32];   /* toque curto nao pode se perder se o jogo estiver lento: segura >= 4 quadros */ static SDL_AudioDeviceID adev; static SDL_GameController* gcs[2];
 static void gc_open(void) {
@@ -87,6 +88,7 @@ void video_present(void) {
     while (SDL_PollEvent(&e)) {
         if (e.type == SDL_QUIT || (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE)) exit(0);
         if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_F9) { extern int g_diag_req; g_diag_req = 1; }
+        if (e.type == SDL_KEYDOWN && !e.key.repeat && e.key.keysym.sym == SDLK_F10) { filt = (filt + 1) % 3; fprintf(stderr, "[video] filtro %d (%s)\n", filt, filt == 0 ? "pixel" : filt == 1 ? "bilinear nitido" : "bilinear"); }
         if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_F3 && !e.key.repeat) show_fps = !show_fps;
         if (e.type == SDL_KEYDOWN && !e.key.repeat && (e.key.keysym.sym == SDLK_F11 || (e.key.keysym.sym == SDLK_RETURN && (e.key.keysym.mod & KMOD_ALT)))) {
             SDL_Window* w = SDL_RenderGetWindow(ren); { int fs = (SDL_GetWindowFlags(w) & SDL_WINDOW_FULLSCREEN_DESKTOP) != 0; SDL_SetWindowFullscreen(w, fs ? 0 : SDL_WINDOW_FULLSCREEN_DESKTOP); SDL_ShowCursor(fs ? SDL_ENABLE : SDL_DISABLE); }
@@ -101,7 +103,8 @@ void video_present(void) {
     pad_set(keys | h1 | gc_bits(gcs[0]));
     pad_has2(1); pad_set2(keys2 | h2 | gc_bits(gcs[1]));
     int w, h; gpu_render(fb, &w, &h);
-    if (!tex || w != tw || h != th) { if (tex) SDL_DestroyTexture(tex); tex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, w, h); tw = w; th = h; }
+    if (filt < 0) filt = getenv("FILTRO") ? atoi(getenv("FILTRO")) % 3 : 1;
+    if (!tex || w != tw || h != th) { SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, filt == 2 ? "1" : "0"); if (tex) SDL_DestroyTexture(tex); tex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, w, h); tw = w; th = h; }
     if (show_fps) fps_draw(fb, w, h, fps_val);
     SDL_UpdateTexture(tex, NULL, fb, w * 4);
     SDL_RenderClear(ren);
@@ -111,7 +114,16 @@ void video_present(void) {
     int dw = ow, dh = ow * 3 / 4; if (dh > oh) { dh = oh; dw = oh * 4 / 3; }
     (void)s; (void)s2;
     SDL_Rect dst = { (ow - dw) / 2, (oh - dh) / 2, dw, dh };
-    SDL_RenderCopy(ren, tex, NULL, &dst);
+    if (filt == 1) {   /* amplia por inteiro (pixel nitido) e depois reduz suave ate o tamanho da janela: bordas sem serrilhado, sem borrar */
+        int k = (dw + w - 1) / w; if (k < 1) k = 1; if (k > 8) k = 8;
+        if (!tgt || tgw != w * k || tgh != h * k) { if (tgt) SDL_DestroyTexture(tgt); SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "1"); tgt = SDL_CreateTexture(ren, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_TARGET, w * k, h * k); tgw = w * k; tgh = h * k; }
+        if (tgt) {
+            SDL_Texture* old = SDL_GetRenderTarget(ren);
+            SDL_SetTextureScaleMode(tex, SDL_ScaleModeNearest);
+            SDL_SetRenderTarget(ren, tgt); SDL_RenderCopy(ren, tex, NULL, NULL); SDL_SetRenderTarget(ren, old);
+            SDL_RenderCopy(ren, tgt, NULL, &dst);
+        } else SDL_RenderCopy(ren, tex, NULL, &dst);
+    } else { SDL_SetTextureScaleMode(tex, filt == 2 ? SDL_ScaleModeLinear : SDL_ScaleModeNearest); SDL_RenderCopy(ren, tex, NULL, &dst); }
     SDL_RenderPresent(ren);
 }
 #else
