@@ -326,7 +326,7 @@ static int list_class(uint32_t madr) {
     while (guard++ < 20000) { uint32_t h = rd32(a | 0x80000000); words += h >> 24; if ((h & 0xffffff) == 0xffffff || (h & 0x800000)) break; uint32_t nx = h & 0x1ffffc; if (nx == a) break; a = nx; }
     int k = -1; for (int i = 0; i < 8; i++) if (lst[i].madr == (madr & 0x1ffffc)) k = i;
     if (k < 0) { for (int i = 0; i < 8; i++) if (!lst[i].madr) { k = i; break; } if (k < 0) k = 0; lst[k].madr = madr & 0x1ffffc; lst[k].ema = (double)words; lst[k].streak = 0; return 0; }
-    if (lst[k].ema > 2500 && words < lst[k].ema * 0.6) {
+    if (lst[k].ema > 500 && words < lst[k].ema * 0.6) {
         diag_partial((uint32_t)words, (uint32_t)lst[k].ema, madr);
         if (lst[k].streak < 3) { lst[k].streak++; g_gpu_skipped++; return words < lst[k].ema * 0.05 ? 2 : 1; }
         lst[k].ema = (double)words; lst[k].streak = 0; return 0;     /* muda o regime (menu, cena nova): aceita */
