@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #ifdef USE_SDL
+#include <stdarg.h>
 #include <SDL.h>
 void gpu_render(uint32_t*, int*, int*);
 void pad_set(uint32_t); void pad_set2(uint32_t); void pad_has2(int);
@@ -70,6 +71,32 @@ static uint32_t keybit(SDL_Keycode k) {
 int audio_queued(void) { return adev ? (int)SDL_GetQueuedAudioSize(adev) / 4 : -1; }
 void audio_push(const int16_t* s, int n) { if (adev) SDL_QueueAudio(adev, s, n * 4); }
 static int show_fps; static float fps_val;
+
+/* ---- aviso temporario (toast): mostra o que foi ligado/desligado (F3, F10, F11, F12) e some em ~3 s ---- */
+static const uint16_t toast_font[64] = { 0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x5d0,0x0,0x1c0,0x2,0x12a4,0x7b6f,0x2c97,0x73e7,0x73cf,0x5bc9,0x79cf,0x79ef,0x7252,0x7bef,0x7bcf,0x410,0x0,0x0,0x0,0x0,0x0,0x0,0x7bed,0x6bae,0x7927,0x6b6e,0x79e7,0x79e4,0x796f,0x5bed,0x7497,0x126f,0x5bad,0x4927,0x5fed,0x6b6d,0x7b6f,0x7be4,0x7b79,0x7bad,0x79cf,0x7492,0x5b6f,0x5b6a,0x5bfd,0x5aad,0x5a92,0x72a7,0x0,0x0,0x0,0x0,0x0 };
+static char toast_txt[96]; static uint32_t toast_until;
+static void toast(uint32_t ms, const char* fmt, ...) {
+    va_list ap; va_start(ap, fmt); vsnprintf(toast_txt, sizeof toast_txt, fmt, ap); va_end(ap); toast_until = SDL_GetTicks() + ms;
+    fprintf(stderr, "[video] %s\n", toast_txt);
+}
+static void toast_draw(uint32_t* px, int w, int h) {
+    if (!toast_until || (int32_t)(SDL_GetTicks() - toast_until) > 0) { toast_until = 0; return; }
+    int sc = h / 120; if (sc < 1) sc = 1;
+    int nl = 1, maxc = 0, cur = 0; for (const char* c = toast_txt; *c; c++) { if (*c == '|') { nl++; cur = 0; } else if (++cur > maxc) maxc = cur; }
+    int bw = maxc * 4 * sc + 6 * sc, bh = nl * 7 * sc + 2 * sc, bx = (w - bw) / 2, by = h - bh - 4 * sc;
+    if (bx < 0) bx = 0;
+    uint32_t left = toast_until - SDL_GetTicks(); int fade = left < 400 ? (int)(left * 256 / 400) : 256;
+    for (int y = by; y < by + bh && y < h; y++) for (int x = bx; x < bx + bw && x < w; x++) { uint32_t p = px[y * w + x]; int r = (p >> 16 & 255), g = (p >> 8 & 255), b = (p & 255); int k = 256 - 190 * fade / 256; px[y * w + x] = 0xff000000u | ((r * k >> 8) << 16) | ((g * k >> 8) << 8) | (b * k >> 8); }
+    int line = 0, col = 0;
+    for (const char* c = toast_txt; *c; c++) {
+        if (*c == '|') { line++; col = 0; continue; }
+        int ch = *c; if (ch >= 'a' && ch <= 'z') ch -= 32; uint16_t gl = (ch >= 32 && ch < 96) ? toast_font[ch - 32] : 0;
+        int x0 = bx + 3 * sc + col * 4 * sc, y0 = by + sc + line * 7 * sc + sc;
+        for (int r = 0; r < 5; r++) for (int q = 0; q < 3; q++) if (gl & (1 << (14 - r * 3 - q)))
+            for (int a = 0; a < sc; a++) for (int b = 0; b < sc; b++) { int X = x0 + q * sc + b, Y = y0 + r * sc + a; if (X >= 0 && X < w && Y >= 0 && Y < h) { uint32_t o = px[Y * w + X]; px[Y * w + X] = 0xff000000u | ((((o >> 16 & 255) * (256 - fade) + 255 * fade) >> 8) << 16) | ((((o >> 8 & 255) * (256 - fade) + 255 * fade) >> 8) << 8) | (((o & 255) * (256 - fade) + 255 * fade) >> 8); } }
+        col++;
+    }
+}
 static void fps_draw(uint32_t* px, int w, int h, float v) {
     static const uint16_t g[10] = { 0x7b6f, 0x2c97, 0x73e7, 0x73cf, 0x5bc9, 0x79cf, 0x79ef, 0x7249, 0x7bef, 0x7bcf };  /* 3x5, linha a linha, bit14 = canto sup. esq. */
     char t[16]; snprintf(t, sizeof t, "%d FPS", (int)(v + 0.5f));
@@ -89,9 +116,9 @@ void video_present(void) {
     while (SDL_PollEvent(&e)) {
         if (e.type == SDL_QUIT || (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE)) exit(0);
         if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_F9) { extern int g_diag_req; g_diag_req = 1; }
-        if (e.type == SDL_KEYDOWN && !e.key.repeat && e.key.keysym.sym == SDLK_F12) { extern void gpu_cycle_scale(void); gpu_cycle_scale(); }
-        if (e.type == SDL_KEYDOWN && !e.key.repeat && e.key.keysym.sym == SDLK_F10) { filt = (filt + 1) % 3; fprintf(stderr, "[video] filtro %d (%s)\n", filt, filt == 0 ? "pixel" : filt == 1 ? "bilinear nitido" : "bilinear"); }
-        if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_F3 && !e.key.repeat) show_fps = !show_fps;
+        if (e.type == SDL_KEYDOWN && !e.key.repeat && e.key.keysym.sym == SDLK_F12) { extern void gpu_cycle_scale(void); extern int gpu_scale(void); gpu_cycle_scale(); toast(3000, "RESOLUCAO INTERNA: %dX", gpu_scale()); }
+        if (e.type == SDL_KEYDOWN && !e.key.repeat && e.key.keysym.sym == SDLK_F10) { filt = (filt + 1) % 3; toast(3000, "FILTRO: %s", filt == 0 ? "PIXEL PURO" : filt == 1 ? "BILINEAR NITIDO" : "BILINEAR SUAVE"); }
+        if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_F3 && !e.key.repeat) { show_fps = !show_fps; toast(2000, "CONTADOR DE FPS: %s", show_fps ? "LIGADO" : "DESLIGADO"); }
         if (e.type == SDL_KEYDOWN && !e.key.repeat && (e.key.keysym.sym == SDLK_F11 || (e.key.keysym.sym == SDLK_RETURN && (e.key.keysym.mod & KMOD_ALT)))) {
             SDL_Window* w = SDL_RenderGetWindow(ren); { int fs = (SDL_GetWindowFlags(w) & SDL_WINDOW_FULLSCREEN_DESKTOP) != 0; SDL_SetWindowFullscreen(w, fs ? 0 : SDL_WINDOW_FULLSCREEN_DESKTOP); SDL_ShowCursor(fs ? SDL_ENABLE : SDL_DISABLE); }
             continue;
@@ -108,6 +135,8 @@ void video_present(void) {
     if (filt < 0) filt = getenv("FILTRO") ? atoi(getenv("FILTRO")) % 3 : 1;
     if (!tex || w != tw || h != th) { SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, filt == 2 ? "1" : "0"); if (tex) SDL_DestroyTexture(tex); tex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, w, h); tw = w; th = h; }
     if (show_fps) fps_draw(fb, w, h, fps_val);
+    { static int first = 1; if (first) { first = 0; extern int gpu_scale(void); toast(5000, "RESOLUCAO INTERNA %dX - F12|FILTRO: %s - F10|FPS: F3  TELA CHEIA: F11", gpu_scale(), filt == 0 ? "PIXEL PURO" : filt == 1 ? "BILINEAR NITIDO" : "BILINEAR SUAVE"); } }
+    toast_draw(fb, w, h);
     SDL_UpdateTexture(tex, NULL, fb, w * 4);
     SDL_RenderClear(ren);
     int ow, oh; SDL_GetRendererOutputSize(ren, &ow, &oh);
