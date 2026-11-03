@@ -306,7 +306,7 @@ static void walk_list(uint32_t a, int first) {
         if ((h & 0xffffff) == 0xffffff || (h & 0x800000)) { { extern uint64_t get_calls(void); extern uint32_t g_frames; extern int hw_in_isr(void); LRec* r = &lring[lring_i++ & 255]; r->frame = g_frames; r->start = a0; r->nodes = guard; r->words = nw; r->cmds = gpu_cmds - c0; r->term = 0; r->isr = hw_in_isr(); r->calls = get_calls(); }
  if (getenv("LISTLOG") && gpu_cmds - c0 < 600) { extern uint32_t g_frames; if (g_frames > 7000) { static int dn; extern void dump_ring(void); if (dn++ < 3) dump_ring(); } if (g_frames > 7000) fprintf(stderr, "[lista] quadro %u inicio=%06x nos=%d palavras=%d cmds=%ld fim: terminador hdr=%08x\n", g_frames, a0, guard, nw, gpu_cmds - c0, h); } break; }
         uint32_t nx = h & 0x1ffffc;
-        if (nx == a) { { extern uint64_t get_calls(void); extern uint32_t g_frames; extern int hw_in_isr(void); LRec* r = &lring[lring_i++ & 255]; r->frame = g_frames; r->start = a0; r->nodes = guard; r->words = nw; r->cmds = gpu_cmds - c0; r->term = 1; r->isr = hw_in_isr(); r->calls = get_calls(); } rs_a = a; rs_pend = 1; rs_tries = 0; { extern uint64_t get_calls(void); extern uint32_t g_frames; extern int hw_in_isr(void); rs_t0 = get_calls(); if (getenv("PAUSELOG")) { static int pn; if (pn++ < 60) fprintf(stderr, "[pausa] quadro %u no=%06x hdr=%08x n=%d calls=%llu isr=%d\n", g_frames, a, h, n, (unsigned long long)get_calls(), hw_in_isr()); } } return; }   /* no ainda sem ligacao */
+        if (nx == a) break;   /* no que aponta pra si mesmo: fim (e o que o jogo faz com o ultimo primitivo) */
         a = nx;
         if (!(guard & 1)) slow = rd32(slow | 0x80000000) & 0x1ffffc;
         if (a == slow && guard > 2) { fprintf(stderr, "[gpu] lista DMA em ciclo (no=%08x) - cortada\n", a); break; }
@@ -318,18 +318,22 @@ static void walk_list(uint32_t a, int first) {
 static void diag_partial(uint32_t words, uint32_t ema, uint32_t madr);
 static struct { uint32_t madr; double ema; int streak; } lst[8];
 int g_gpu_skipped; static int skip_frame;
-static int list_skip(uint32_t madr) {
-    static int sk_en = -1; if (sk_en < 0) sk_en = getenv("SKIPLIST") != NULL;
-    if (sk_en && skip_frame) { g_gpu_skipped++; return 1; }
+/* Classifica a lista antes de desenhar: 0 = normal, 1 = parcial (so parte dos primitivos: desenha mas o quadro nao e exibido),
+   2 = quase vazia (so um restinho: nao desenha, senao estraga o quadro que esta na tela). */
+static int bad_buf[2]; int g_gpu_held;
+static int list_class(uint32_t madr) {
     uint32_t a = madr & 0x1ffffc; long words = 0; int guard = 0;
     while (guard++ < 20000) { uint32_t h = rd32(a | 0x80000000); words += h >> 24; if ((h & 0xffffff) == 0xffffff || (h & 0x800000)) break; uint32_t nx = h & 0x1ffffc; if (nx == a) break; a = nx; }
-    { static int s2 = -1; static uint32_t lastm; static uint32_t lastf = ~0u; extern uint32_t g_frames; if (s2 < 0) s2 = getenv("SKIP2") != NULL; uint32_t mm = madr & 0x1ffffc; int same = (lastf == g_frames && lastm == mm); lastm = mm; lastf = g_frames; if (s2 && same && words <= 40) { g_gpu_skipped++; return 1; } }
     int k = -1; for (int i = 0; i < 8; i++) if (lst[i].madr == (madr & 0x1ffffc)) k = i;
     if (k < 0) { for (int i = 0; i < 8; i++) if (!lst[i].madr) { k = i; break; } if (k < 0) k = 0; lst[k].madr = madr & 0x1ffffc; lst[k].ema = (double)words; lst[k].streak = 0; return 0; }
-    if (lst[k].ema > 2500 && words < lst[k].ema * 0.5) diag_partial((uint32_t)words, (uint32_t)lst[k].ema, madr);
-    if (sk_en && lst[k].ema > 2500 && words < lst[k].ema * 0.5 && lst[k].streak < 2) { lst[k].streak++; g_gpu_skipped++; skip_frame = 1; return 1; }
+    if (lst[k].ema > 2500 && words < lst[k].ema * 0.6) {
+        diag_partial((uint32_t)words, (uint32_t)lst[k].ema, madr);
+        if (lst[k].streak < 3) { lst[k].streak++; g_gpu_skipped++; return words < lst[k].ema * 0.05 ? 2 : 1; }
+        lst[k].ema = (double)words; lst[k].streak = 0; return 0;     /* muda o regime (menu, cena nova): aceita */
+    }
     lst[k].streak = 0; lst[k].ema = lst[k].ema * 0.995; if ((double)words > lst[k].ema) lst[k].ema = (double)words; return 0;
 }
+int gpu_display_bad(void) { return bad_buf[g.dy >= 240]; }
 static uint32_t q_madr[16]; static int q_n;
 int gpu_pending(void) { return rs_pend || q_n; }
 static void drain(void) {
@@ -357,13 +361,14 @@ void gpu_dma(uint32_t madr, uint32_t bcr, uint32_t chcr) {
     double t0 = now_s(); gpu_dma_inner(madr, bcr, chcr); if (getenv("RASTERCLK")) { double dt = now_s() - t0; if (dt > 0) g_vbonus -= dt; }
 }
 static void gpu_dma_inner(uint32_t madr, uint32_t bcr, uint32_t chcr) {
-    dmas_f++; g_gpu_dirty = 1; gpu_busy_until = now_s() + 20e-6; { extern int g_gpu_cb_pending; extern double g_gpu_cb_pending_t; g_gpu_cb_pending++; g_gpu_cb_pending_t = now_s() + 300e-6; }
+    dmas_f++; g_gpu_dirty = 1; gpu_busy_until = now_s() + 20e-6; { extern int g_gpu_cb_pending; extern double g_gpu_cb_pending_t; g_gpu_cb_pending++; { static double cbd = -1; if (cbd < 0) cbd = getenv("GPUCB") ? atof(getenv("GPUCB")) * 1e-6 : 300e-6; g_gpu_cb_pending_t = now_s() + cbd; } }
     uint32_t sync = (chcr >> 9) & 3;
     if (getenv("GPU_DMAT")) { extern uint32_t g_frames; if (g_frames >= 8230) fprintf(stderr, "[gdma] q%u madr=%08x bcr=%08x chcr=%08x\n", g_frames, madr, bcr, chcr); }
     if (sync == 2) {
-        if (list_skip(madr)) { static int sk; if (++sk <= 20 || !(sk % 200)) fprintf(stderr, "[gpu] lista parcial pulada (%d)\n", sk); return; }
-        if (q_n < 16) q_madr[q_n++] = madr & 0x1ffffc; else fprintf(stderr, "[gpu] fila de listas cheia\n");
-        drain();
+        int cls = list_class(madr);
+        if (cls == 2) { static int sk; if (++sk <= 20 || !(sk % 500)) fprintf(stderr, "[gpu] lista quase vazia pulada (%d)\n", sk); return; }
+        walk_list(madr & 0x1ffffc, 1);
+        bad_buf[g.ay0 >= 240] = cls;
     } else {
         uint32_t words = (bcr & 0xffff) * (sync == 1 ? (bcr >> 16) : 1); if (!words) words = 0x10000;
         uint32_t a = madr & 0x1ffffc;
@@ -394,7 +399,7 @@ void gpu_diag_dump(const char* tag) {
 }
 static uint32_t diag_due; int g_diag_req;
 static void diag_partial(uint32_t words, uint32_t ema, uint32_t madr) {
-    extern uint32_t g_frames; if (diag_due || diag_n >= 6 || (diag_last && g_frames - diag_last < 120)) return;
+    extern uint32_t g_frames; if (getenv("PARTLOG")) fprintf(stderr, "[p] %u\n", g_frames); if (diag_due || diag_n >= 6 || (diag_last && g_frames - diag_last < 120)) return;
     diag_due = g_frames + 1; diag_last = g_frames;
     fprintf(stderr, "[diag] lista parcial no quadro %u (%u palavras de ~%u, inicio %06x)\n", g_frames, words, ema, madr & 0x1ffffc);
 }
