@@ -328,7 +328,9 @@ static int list_class(uint32_t madr) {
     uint32_t a = madr & 0x1ffffc; long words = 0; int guard = 0;
     while (guard++ < 20000) { uint32_t h = rd32(a | 0x80000000); words += h >> 24; if ((h & 0xffffff) == 0xffffff || (h & 0x800000)) break; uint32_t nx = h & 0x1ffffc; if (nx == a) break; a = nx; }
     int k = -1; for (int i = 0; i < 8; i++) if (lst[i].madr == (madr & 0x1ffffc)) k = i;
-    if (k < 0) { for (int i = 0; i < 8; i++) if (!lst[i].madr) { k = i; break; } if (k < 0) k = 0; lst[k].madr = madr & 0x1ffffc; lst[k].ema = (double)words; lst[k].streak = 0; return 0; }
+    if (k < 0) { if (words < 500) return 0;   /* listas pequenas em enderecos variados nao sao rastreadas (senao expulsam as listas principais) */
+        k = 0; for (int i = 0; i < 8; i++) { if (!lst[i].madr) { k = i; break; } if (lst[i].ema < lst[k].ema) k = i; }
+        lst[k].madr = madr & 0x1ffffc; lst[k].ema = (double)words; lst[k].streak = 0; return 0; }
     if (lst[k].ema > 500 && words < lst[k].ema * 0.6) {
         diag_partial((uint32_t)words, (uint32_t)lst[k].ema, madr);
         if (lst[k].streak < 3) { lst[k].streak++; g_gpu_skipped++; return words < lst[k].ema * 0.05 ? 2 : 1; }
@@ -406,9 +408,9 @@ void gpu_diag_dump(const char* tag) {
 
 /* anel de miniaturas dos ultimos quadros exibidos (F9 salva uma folha de contato, assim da pra pegar o piscar DEPOIS que passou) */
 static void thumb_push(void) {
-    if (g.dispoff || g.d24 || (g.hres & 3) != 1 || g.vres) return;
+    if (g.dispoff || g.d24 || g.vres) return; int tw = (g.hres & 4) ? 368 : (int[]){ 256, 320, 512, 640 }[g.hres & 3];
     int k = th_i++ % TH_N; extern uint32_t g_frames; th_frame[k] = g_frames;
-    for (int y = 0; y < 120; y++) for (int x = 0; x < 160; x++) { uint16_t v = VR(g.dx + x * 2, g.dy + y * 2); th_img[k][y][x][0] = (v & 31) << 3; th_img[k][y][x][1] = ((v >> 5) & 31) << 3; th_img[k][y][x][2] = ((v >> 10) & 31) << 3; }
+    for (int y = 0; y < 120; y++) for (int x = 0; x < 160; x++) { uint16_t v = VR(g.dx + x * tw / 160, g.dy + y * 2); th_img[k][y][x][0] = (v & 31) << 3; th_img[k][y][x][1] = ((v >> 5) & 31) << 3; th_img[k][y][x][2] = ((v >> 10) & 31) << 3; }
 }
 static void thumb_dump(const char* path) {
     FILE* f = fopen(path, "wb"); if (!f) return; int cols = 10, rows = 6;
