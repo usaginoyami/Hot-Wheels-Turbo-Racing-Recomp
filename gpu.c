@@ -15,6 +15,9 @@ typedef struct { uint32_t frame; int dx, dy, ax0, ay0, dmas; long cmds; } VRec;
 static VRec vring[240]; static int vring_i;
 static int diag_n; static uint32_t diag_last = 0;
 void gpu_diag_dump(const char* tag);
+#define TH_N 60
+static uint8_t th_img[TH_N][120][160][3]; static uint32_t th_frame[TH_N]; static int th_i;
+static void thumb_dump(const char* path);
 static int dmas_f; static long cmds_f0;
 #define VR(x, y) vram[((y) & 511) * 1024 + ((x) & 1023)]
 
@@ -394,8 +397,24 @@ void gpu_diag_dump(const char* tag) {
     for (int i = 0; i < 256; i++) { LRec* r = &lring[(lring_i + i) & 255]; if (!r->start) continue; fprintf(f, "%u %06x %u %u %ld %s isr=%d %llu\n", r->frame, r->start, r->nodes, r->words, r->cmds, r->term ? "SEM-LIGACAO" : "ok", r->isr, r->calls); }
     fprintf(f, "--- quadros (quadro disp draw dmas cmds) ---\n");
     for (int i = 0; i < 240; i++) { VRec* v = &vring[(vring_i + i) % 240]; if (!v->frame) continue; fprintf(f, "%u (%d,%d) (%d,%d) %d %ld\n", v->frame, v->dx, v->dy, v->ax0, v->ay0, v->dmas, v->cmds); }
+    fprintf(f, "--- folha de contato (esq->dir, cima->baixo, mais antigo primeiro) quadros: ");
+    for (int n = 0; n < TH_N; n++) { int k = (th_i + n) % TH_N; if (th_i < TH_N) k = n < th_i ? n : 0; fprintf(f, "%u ", th_frame[k]); } fprintf(f, "\n");
     fclose(f);
+    sprintf(fn, "diag_%s_ring.ppm", tag); thumb_dump(fn);
     sprintf(fn, "diag_%s.ppm", tag); gpu_dump(fn); sprintf(fn, "diag_%s_vram.ppm", tag); gpu_dump_vram(fn);
+}
+
+/* anel de miniaturas dos ultimos quadros exibidos (F9 salva uma folha de contato, assim da pra pegar o piscar DEPOIS que passou) */
+static void thumb_push(void) {
+    if (g.dispoff || g.d24 || (g.hres & 3) != 1 || g.vres) return;
+    int k = th_i++ % TH_N; extern uint32_t g_frames; th_frame[k] = g_frames;
+    for (int y = 0; y < 120; y++) for (int x = 0; x < 160; x++) { uint16_t v = VR(g.dx + x * 2, g.dy + y * 2); th_img[k][y][x][0] = (v & 31) << 3; th_img[k][y][x][1] = ((v >> 5) & 31) << 3; th_img[k][y][x][2] = ((v >> 10) & 31) << 3; }
+}
+static void thumb_dump(const char* path) {
+    FILE* f = fopen(path, "wb"); if (!f) return; int cols = 10, rows = 6;
+    fprintf(f, "P6\n%d %d\n255\n", cols * 160, rows * 120);
+    for (int r = 0; r < rows; r++) for (int y = 0; y < 120; y++) for (int c = 0; c < cols; c++) { int n = r * cols + c; int k = (th_i + n) % TH_N; if (th_i < TH_N) k = n < th_i ? n : 0; fwrite(th_img[k][y], 3, 160, f); }
+    fclose(f);
 }
 static uint32_t diag_due; int g_diag_req;
 static void diag_partial(uint32_t words, uint32_t ema, uint32_t madr) {
@@ -404,7 +423,7 @@ static void diag_partial(uint32_t words, uint32_t ema, uint32_t madr) {
     fprintf(stderr, "[diag] lista parcial no quadro %u (%u palavras de ~%u, inicio %06x)\n", g_frames, words, ema, madr & 0x1ffffc);
 }
 int gpu_dump_vram(const char* path);
-void gpu_vblank(void) { g.field ^= 1; skip_frame = 0;
+void gpu_vblank(void) { g.field ^= 1; skip_frame = 0; thumb_push();
     { extern uint32_t g_frames; if (diag_due && g_frames >= diag_due) { char tag[40]; sprintf(tag, "auto%d_q%u", ++diag_n, g_frames); diag_due = 0; fprintf(stderr, "[diag] salvando diag_%s.*\n", tag); gpu_diag_dump(tag); } if (g_diag_req) { char tag[40]; static int mn; g_diag_req = 0; sprintf(tag, "F9_%d_q%u", ++mn, g_frames); fprintf(stderr, "[diag] F9: salvando diag_%s.*\n", tag); gpu_diag_dump(tag); } }
     if (getenv("FLATLOG")) { extern uint32_t g_frames; int w = 320, h = 240, mn = 99999, mx = 0; int dis = 0;
         for (int k = 0; k < 400; k++) { int x = (k * 37) % w, y = (k * 53) % h; uint16_t v = VR(g.dx + x, g.dy + y); int l = (v & 31) + ((v >> 5) & 31) + ((v >> 10) & 31); if (l < mn) mn = l; if (l > mx) mx = l; }
