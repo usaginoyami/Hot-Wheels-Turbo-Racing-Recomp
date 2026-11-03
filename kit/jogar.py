@@ -111,7 +111,7 @@ def compilar():
     total = len(fontes); feito = [0]
     def comp(f):
         o = os.path.join(obj, os.path.basename(f) + '.o')
-        c = zig + ['cc', '-target', ALVO, '-O1', '-w', '-I', FONTE, '-DUSE_SDL',
+        c = zig + ['cc', '-target', ALVO, '-O2' if os.path.basename(f) in ('gpu.c', 'video.c') else '-O1', '-w', '-I', FONTE, '-DUSE_SDL',
                    '-I', os.path.join(sdl, 'include'), '-I', os.path.join(sdl, 'include', 'SDL2'), '-c', f, '-o', o]
         r = subprocess.run(c, env=env, capture_output=True, text=True)
         feito[0] += 1

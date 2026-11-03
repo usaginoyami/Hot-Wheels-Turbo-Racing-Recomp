@@ -94,7 +94,7 @@ static inline void plot(int x, int y, int r, int gg, int b, int semi, int mb15) 
 }
 
 /* amostra de textura: retorna 15bit (0 = transparente) */
-static uint16_t tex_sample(int u, int v, int clx, int cly) {
+static inline uint16_t tex_sample(int u, int v, int clx, int cly) {
     u &= 255; v &= 255;
     u = (u & ~(g.twx * 8)) | ((g.twox & g.twx) * 8);
     v = (v & ~(g.twy * 8)) | ((g.twoy & g.twy) * 8);
@@ -138,6 +138,8 @@ static void tri_n(V a, V b, V c, int textured, int semi, int raw, int gouraud, i
     }
 }
 
+static inline long long fdiv_ll(long long n, long long d) { long long q = n / d; if ((n % d != 0) && ((n < 0) != (d < 0))) q--; return q; }   /* piso (d > 0) */
+static inline long long cdiv_ll(long long n, long long d) { return -fdiv_ll(-n, d); }
 static void tri_s(V a, V b, V c, int textured, int semi, int raw, int gouraud, int clx, int cly) {
     typedef long long ll;
     if (((b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x)) == 0) return;
@@ -150,23 +152,40 @@ static void tri_s(V a, V b, V c, int textured, int semi, int raw, int gouraud, i
     int cx0 = g.ax0 * S, cy0 = g.ay0 * S, cx1 = (g.ax1 + 1) * S - 1, cy1 = (g.ay1 + 1) * S - 1;
     if (minx < cx0) minx = cx0; if (maxx > cx1) maxx = cx1; if (miny < cy0) miny = cy0; if (maxy > cy1) maxy = cy1;
     #define BIAS2(p0, p1) ((((p1)->y == (p0)->y) ? ((p1)->x > (p0)->x) : ((p1)->y < (p0)->y)) ? 0 : -1)
-    int b0 = BIAS2(&b, &c), b1 = BIAS2(&c, &a), b2 = BIAS2(&a, &b);
-    for (int y = miny; y <= maxy; y++) for (int x = minx; x <= maxx; x++) {
-        ll w0 = (ll)(c.x - b.x) * (y - b.y) - (ll)(c.y - b.y) * (x - b.x);
-        ll w1 = (ll)(a.x - c.x) * (y - c.y) - (ll)(a.y - c.y) * (x - c.x);
-        ll w2 = (ll)(b.x - a.x) * (y - a.y) - (ll)(b.y - a.y) * (x - a.x);
-        if (w0 + b0 < 0 || w1 + b1 < 0 || w2 + b2 < 0) continue;
-        int r, gg, bl, u, v;
-        if (gouraud) { r = (int)((a.r * w0 + b.r * w1 + c.r * w2) / area); gg = (int)((a.g * w0 + b.g * w1 + c.g * w2) / area); bl = (int)((a.b * w0 + b.b * w1 + c.b * w2) / area); }
-        else { r = a.r; gg = a.g; bl = a.b; }
-        if (textured) {
-            u = (int)((a.u * w0 + b.u * w1 + c.u * w2) / area); v = (int)((a.v * w0 + b.v * w1 + c.v * w2) / area);
-            uint16_t t = tex_sample(u, v, clx, cly);
-            if (!t) continue;
-            int tr = t & 31, tg = (t >> 5) & 31, tb = (t >> 10) & 31;
-            if (!raw) { tr = tr * r / 128; tg = tg * gg / 128; tb = tb * bl / 128; }
-            plot_hr(x, y, tr, tg, tb, semi && (t & 0x8000));
-        } else plot_hr(x, y, r >> 3, gg >> 3, bl >> 3, semi);
+    ll bi[3] = { BIAS2(&b, &c), BIAS2(&c, &a), BIAS2(&a, &b) };
+    ll dx0 = -(ll)(c.y - b.y), dx1 = -(ll)(a.y - c.y), dx2 = -(ll)(b.y - a.y);   /* variacao de w em x */
+    double inv = 1.0 / (double)area;
+    double dRx = 0, dGx = 0, dBx = 0, dUx = 0, dVx = 0;
+    if (gouraud) { dRx = (a.r * dx0 + b.r * dx1 + c.r * dx2) * inv; dGx = (a.g * dx0 + b.g * dx1 + c.g * dx2) * inv; dBx = (a.b * dx0 + b.b * dx1 + c.b * dx2) * inv; }
+    if (textured) { dUx = (a.u * dx0 + b.u * dx1 + c.u * dx2) * inv; dVx = (a.v * dx0 + b.v * dx1 + c.v * dx2) * inv; }
+    for (int y = miny; y <= maxy; y++) {
+        ll w0 = (ll)(c.x - b.x) * (y - b.y) + (ll)(c.y - b.y) * b.x;   /* w0 em x = 0 */
+        ll w1 = (ll)(a.x - c.x) * (y - c.y) + (ll)(a.y - c.y) * c.x;
+        ll w2 = (ll)(b.x - a.x) * (y - a.y) + (ll)(b.y - a.y) * a.x;
+        ll wv[3] = { w0 + bi[0], w1 + bi[1], w2 + bi[2] }, dv[3] = { dx0, dx1, dx2 };
+        ll lo = minx, hi = maxx; int vazio = 0;
+        for (int k = 0; k < 3; k++) {     /* w + bias + dw * x >= 0  ->  intervalo de x dentro do triangulo */
+            if (dv[k] > 0) { ll l = cdiv_ll(-wv[k], dv[k]); if (l > lo) lo = l; }
+            else if (dv[k] < 0) { ll h = fdiv_ll(wv[k], -dv[k]); if (h < hi) hi = h; }
+            else if (wv[k] < 0) { vazio = 1; break; }
+        }
+        if (vazio || lo > hi) continue;
+        double R0 = 0, G0 = 0, B0 = 0, U0 = 0, V0 = 0; ll W0 = w0 + dx0 * lo, W1 = w1 + dx1 * lo, W2 = w2 + dx2 * lo;
+        if (gouraud) { R0 = (a.r * W0 + b.r * W1 + c.r * W2) * inv; G0 = (a.g * W0 + b.g * W1 + c.g * W2) * inv; B0 = (a.b * W0 + b.b * W1 + c.b * W2) * inv; }
+        if (textured) { U0 = (a.u * W0 + b.u * W1 + c.u * W2) * inv + 1e-6; V0 = (a.v * W0 + b.v * W1 + c.v * W2) * inv + 1e-6; }
+        int r = a.r, gg = a.g, bl = a.b;
+        for (int x = (int)lo; x <= (int)hi; x++) {
+            double dx = (double)(x - (int)lo);
+            if (gouraud) { r = (int)(R0 + dRx * dx); gg = (int)(G0 + dGx * dx); bl = (int)(B0 + dBx * dx); }
+            if (textured) {
+                int u = (int)(U0 + dUx * dx), v = (int)(V0 + dVx * dx);
+                uint16_t t = tex_sample(u, v, clx, cly);
+                if (!t) continue;
+                int tr = t & 31, tg = (t >> 5) & 31, tb = (t >> 10) & 31;
+                if (!raw) { tr = tr * r / 128; tg = tg * gg / 128; tb = tb * bl / 128; }
+                plot_hr(x, y, tr, tg, tb, semi && (t & 0x8000));
+            } else plot_hr(x, y, r >> 3, gg >> 3, bl >> 3, semi);
+        }
     }
 }
 static void tri(V a, V b, V c, int textured, int semi, int raw, int gouraud, int clx, int cly) {
