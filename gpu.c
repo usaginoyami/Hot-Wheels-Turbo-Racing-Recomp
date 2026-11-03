@@ -7,6 +7,7 @@
 
 uint16_t vram[512 * 1024];
 int gpu_dump(const char*);
+void gpu_render(uint32_t*, int*, int*);
 
 /* ---- diagnostico: historico recente de listas/quadros e despejo automatico quando uma lista vem quase vazia ---- */
 typedef struct { uint32_t frame, start, nodes, words; long cmds; int term; int isr; unsigned long long calls; } LRec;
