@@ -82,7 +82,7 @@ static void tri(V a, V b, V c, int textured, int semi, int raw, int gouraud, int
     if (maxx - minx > 1023 || maxy - miny > 511) return;
     if (minx < g.ax0) minx = g.ax0; if (maxx > g.ax1) maxx = g.ax1; if (miny < g.ay0) miny = g.ay0; if (maxy > g.ay1) maxy = g.ay1;
     /* regra topo-esquerda aproximada */
-    #define BIAS(p0, p1) ((((p1)->y == (p0)->y) ? ((p1)->x < (p0)->x) : ((p1)->y < (p0)->y)) ? 0 : -1)
+    #define BIAS(p0, p1) ((((p1)->y == (p0)->y) ? ((p1)->x > (p0)->x) : ((p1)->y < (p0)->y)) ? 0 : -1)
     int b0 = BIAS(&b, &c), b1 = BIAS(&c, &a), b2 = BIAS(&a, &b);
     for (int y = miny; y <= maxy; y++) for (int x = minx; x <= maxx; x++) {
         int w0 = (c.x - b.x) * (y - b.y) - (c.y - b.y) * (x - b.x);

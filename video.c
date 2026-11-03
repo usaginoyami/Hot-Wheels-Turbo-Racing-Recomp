@@ -36,7 +36,7 @@ static uint32_t gc_bits(SDL_GameController* gc) {
 }
 int video_init(void) {
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMECONTROLLER)) { fprintf(stderr, "SDL: %s\n", SDL_GetError()); return 0; }
-    win = SDL_CreateWindow("Dragon Ball GT Final Bout (recomp)", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 960, 720, SDL_WINDOW_RESIZABLE);
+    win = SDL_CreateWindow("Hot Wheels Turbo Racing (recomp)", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 960, 720, SDL_WINDOW_RESIZABLE);
     ren = SDL_CreateRenderer(win, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
     if (!ren) ren = SDL_CreateRenderer(win, -1, 0);
     SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "0");
