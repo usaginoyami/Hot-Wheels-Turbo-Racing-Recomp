@@ -140,21 +140,24 @@ static void tri_n(V a, V b, V c, int textured, int semi, int raw, int gouraud, i
 
 static inline long long fdiv_ll(long long n, long long d) { long long q = n / d; if ((n % d != 0) && ((n < 0) != (d < 0))) q--; return q; }   /* piso (d > 0) */
 static inline long long cdiv_ll(long long n, long long d) { return -fdiv_ll(-n, d); }
-static void tri_s(V a, V b, V c, int textured, int semi, int raw, int gouraud, int clx, int cly) {
+static void tri_gen(V a, V b, V c, int textured, int semi, int raw, int gouraud, int clx, int cly, int sc, int hires) {
     typedef long long ll;
     if (((b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x)) == 0) return;
     { int mnx = a.x, mxx = a.x, mny = a.y, mxy = a.y; V* q[3] = { &a, &b, &c }; for (int i = 1; i < 3; i++) { if (q[i]->x < mnx) mnx = q[i]->x; if (q[i]->x > mxx) mxx = q[i]->x; if (q[i]->y < mny) mny = q[i]->y; if (q[i]->y > mxy) mxy = q[i]->y; } if (mxx - mnx > 1023 || mxy - mny > 511) return; }
-    a.x *= S; a.y *= S; b.x *= S; b.y *= S; c.x *= S; c.y *= S;
+    a.x *= sc; a.y *= sc; b.x *= sc; b.y *= sc; c.x *= sc; c.y *= sc;
     ll area = (ll)(b.x - a.x) * (c.y - a.y) - (ll)(b.y - a.y) * (c.x - a.x);
     if (area < 0) { V t = b; b = c; c = t; area = -area; }
     int minx = a.x, maxx = a.x, miny = a.y, maxy = a.y; V* p[3] = { &a, &b, &c };
     for (int i = 1; i < 3; i++) { if (p[i]->x < minx) minx = p[i]->x; if (p[i]->x > maxx) maxx = p[i]->x; if (p[i]->y < miny) miny = p[i]->y; if (p[i]->y > maxy) maxy = p[i]->y; }
-    int cx0 = g.ax0 * S, cy0 = g.ay0 * S, cx1 = (g.ax1 + 1) * S - 1, cy1 = (g.ay1 + 1) * S - 1;
+    int cx0 = g.ax0 * sc, cy0 = g.ay0 * sc, cx1 = (g.ax1 + 1) * sc - 1, cy1 = (g.ay1 + 1) * sc - 1;
     if (minx < cx0) minx = cx0; if (maxx > cx1) maxx = cx1; if (miny < cy0) miny = cy0; if (maxy > cy1) maxy = cy1;
     #define BIAS2(p0, p1) ((((p1)->y == (p0)->y) ? ((p1)->x > (p0)->x) : ((p1)->y < (p0)->y)) ? 0 : -1)
     ll bi[3] = { BIAS2(&b, &c), BIAS2(&c, &a), BIAS2(&a, &b) };
     ll dx0 = -(ll)(c.y - b.y), dx1 = -(ll)(a.y - c.y), dx2 = -(ll)(b.y - a.y);   /* variacao de w em x */
     double inv = 1.0 / (double)area;
+    /* amostragem rapida: sem janela de textura e triangulo grande -> copia a paleta (CLUT) pra um vetor local */
+    uint16_t clut[256]; int fast = 0, bxx = g.tpx * 64, byy = g.tpy * 256, dep = g.depth;
+    if (textured && (g.twx | g.twy) == 0 && dep < 2 && (area / 2 / ((ll)sc * sc)) > 200) { int n = dep == 0 ? 16 : 256; for (int i = 0; i < n; i++) clut[i] = VR(clx * 16 + i, cly); fast = 1; }
     double dRx = 0, dGx = 0, dBx = 0, dUx = 0, dVx = 0;
     if (gouraud) { dRx = (a.r * dx0 + b.r * dx1 + c.r * dx2) * inv; dGx = (a.g * dx0 + b.g * dx1 + c.g * dx2) * inv; dBx = (a.b * dx0 + b.b * dx1 + c.b * dx2) * inv; }
     if (textured) { dUx = (a.u * dx0 + b.u * dx1 + c.u * dx2) * inv; dVx = (a.v * dx0 + b.v * dx1 + c.v * dx2) * inv; }
@@ -171,7 +174,7 @@ static void tri_s(V a, V b, V c, int textured, int semi, int raw, int gouraud, i
         }
         if (vazio || lo > hi) continue;
         double R0 = 0, G0 = 0, B0 = 0, U0 = 0, V0 = 0; ll W0 = w0 + dx0 * lo, W1 = w1 + dx1 * lo, W2 = w2 + dx2 * lo;
-        if (gouraud) { R0 = (a.r * W0 + b.r * W1 + c.r * W2) * inv; G0 = (a.g * W0 + b.g * W1 + c.g * W2) * inv; B0 = (a.b * W0 + b.b * W1 + c.b * W2) * inv; }
+        if (gouraud) { R0 = (a.r * W0 + b.r * W1 + c.r * W2) * inv + 1e-6; G0 = (a.g * W0 + b.g * W1 + c.g * W2) * inv + 1e-6; B0 = (a.b * W0 + b.b * W1 + c.b * W2) * inv + 1e-6; }
         if (textured) { U0 = (a.u * W0 + b.u * W1 + c.u * W2) * inv + 1e-6; V0 = (a.v * W0 + b.v * W1 + c.v * W2) * inv + 1e-6; }
         int r = a.r, gg = a.g, bl = a.b;
         for (int x = (int)lo; x <= (int)hi; x++) {
@@ -179,18 +182,26 @@ static void tri_s(V a, V b, V c, int textured, int semi, int raw, int gouraud, i
             if (gouraud) { r = (int)(R0 + dRx * dx); gg = (int)(G0 + dGx * dx); bl = (int)(B0 + dBx * dx); }
             if (textured) {
                 int u = (int)(U0 + dUx * dx), v = (int)(V0 + dVx * dx);
-                uint16_t t = tex_sample(u, v, clx, cly);
+                uint16_t t;
+                if (fast) { u &= 255; v &= 255; if (dep == 0) { uint16_t w = VR(bxx + (u >> 2), byy + v); t = clut[(w >> ((u & 3) * 4)) & 15]; } else { uint16_t w = VR(bxx + (u >> 1), byy + v); t = clut[(w >> ((u & 1) * 8)) & 255]; } }
+                else t = tex_sample(u, v, clx, cly);
                 if (!t) continue;
                 int tr = t & 31, tg = (t >> 5) & 31, tb = (t >> 10) & 31;
                 if (!raw) { tr = tr * r / 128; tg = tg * gg / 128; tb = tb * bl / 128; }
-                plot_hr(x, y, tr, tg, tb, semi && (t & 0x8000));
-            } else plot_hr(x, y, r >> 3, gg >> 3, bl >> 3, semi);
+                if (hires) plot_hr(x, y, tr, tg, tb, semi && (t & 0x8000)); else plot(x, y, tr, tg, tb, semi && (t & 0x8000), 0);
+            } else if (hires) plot_hr(x, y, r >> 3, gg >> 3, bl >> 3, semi); else plot(x, y, r >> 3, gg >> 3, bl >> 3, semi, 0);
         }
     }
 }
 static void tri(V a, V b, V c, int textured, int semi, int raw, int gouraud, int clx, int cly) {
-    g_blk = 0; tri_n(a, b, c, textured, semi, raw, gouraud, clx, cly); g_blk = 1;
-    if (S > 1) tri_s(a, b, c, textured, semi, raw, gouraud, clx, cly);
+    gpu_tris++;
+    static int trichk = -1; if (trichk < 0) trichk = getenv("TRICHECK") != NULL;
+    if (trichk) { static int n, nbad, npx; static uint16_t sv[512 * 1024], r1[512 * 1024]; extern uint32_t g_frames; if (g_frames > 6900 && (n++ % 41) == 0) {
+        memcpy(sv, vram, sizeof sv); g_blk = 0; tri_n(a, b, c, textured, semi, raw, gouraud, clx, cly); memcpy(r1, vram, sizeof sv); memcpy(vram, sv, sizeof sv);
+        tri_gen(a, b, c, textured, semi, raw, gouraud, clx, cly, 1, 0); int d = 0; for (int i = 0; i < 512 * 1024; i++) if (r1[i] != vram[i]) d++; if (d) { nbad++; npx += d; }
+        if (n % 4000 == 1 || (d && nbad < 6)) fprintf(stderr, "[tricheck] tris=%d com_diferenca=%d pixels=%d\n", n, nbad, npx); g_blk = 1; if (S > 1) tri_gen(a, b, c, textured, semi, raw, gouraud, clx, cly, S, 1); return; } }
+    g_blk = 0; tri_gen(a, b, c, textured, semi, raw, gouraud, clx, cly, 1, 0); g_blk = 1;
+    if (S > 1) tri_gen(a, b, c, textured, semi, raw, gouraud, clx, cly, S, 1);
 }
 
 static void rect(int x0, int y0, int w, int h, uint32_t col, int textured, int semi, int raw, int u0, int v0, int clx, int cly) {
