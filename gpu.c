@@ -371,9 +371,16 @@ static void gpu_dma_inner(uint32_t madr, uint32_t bcr, uint32_t chcr) {
     if (getenv("GPU_DMAT")) { extern uint32_t g_frames; if (g_frames >= 8230) fprintf(stderr, "[gdma] q%u madr=%08x bcr=%08x chcr=%08x\n", g_frames, madr, bcr, chcr); }
     if (sync == 2) {
         int cls = list_class(madr);
-        if (cls == 2) { static int sk; if (++sk <= 20 || !(sk % 500)) fprintf(stderr, "[gpu] lista quase vazia pulada (%d)\n", sk); return; }
+        static uint32_t mb_m[4]; static int mb_b[4], mb_n;
+        int mi = -1; for (int i = 0; i < 4; i++) if (mb_m[i] == (madr & 0x1ffffc)) mi = i;
+        if (cls) {   /* lista parcial/quase vazia: nao desenha por cima do quadro antigo (daria dois quadros misturados); segura a imagem anterior */
+            static int sk; if (++sk <= 20 || !(sk % 500)) fprintf(stderr, "[gpu] lista parcial pulada cls=%d (%d)\n", cls, sk);
+            if (mi >= 0) bad_buf[mb_b[mi]] = cls; else bad_buf[0] = bad_buf[1] = cls;
+            return;
+        }
         walk_list(madr & 0x1ffffc, 1);
-        bad_buf[g.ay0 >= 240] = cls;
+        if (mi < 0) { mi = mb_n++ & 3; mb_m[mi] = madr & 0x1ffffc; }
+        mb_b[mi] = g.ay0 >= 240; bad_buf[mb_b[mi]] = 0;
     } else {
         uint32_t words = (bcr & 0xffff) * (sync == 1 ? (bcr >> 16) : 1); if (!words) words = 0x10000;
         uint32_t a = madr & 0x1ffffc;
